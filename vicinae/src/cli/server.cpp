@@ -28,6 +28,7 @@
 #include "services/window-manager/window-manager.hpp"
 #include "settings-controller/settings-controller.hpp"
 #include "settings/settings-window.hpp"
+#include "theme/theme-db.hpp"
 #include "ui/launcher-window/launcher-window.hpp"
 #include "vicinae.hpp"
 #include <QString>
@@ -167,10 +168,8 @@ void CliServerCommand::run(CLI::App *app) {
   }
 
   FaviconService::initialize(new FaviconService(Omnicast::dataDir() / "favicon"));
-
   QApplication::setApplicationName("vicinae");
   QApplication::setQuitOnLastWindowClosed(false);
-
   ApplicationContext ctx;
 
   ctx.navigation = std::make_unique<NavigationController>(ctx);
@@ -183,8 +182,6 @@ void CliServerCommand::run(CLI::App *app) {
   commandServer.setHandler(new IpcCommandHandler(ctx));
   commandServer.start(Omnicast::commandSocketPath());
 
-  bool initalConfigPass = true;
-
   auto configChanged = [&](const ConfigService::Value &next, const ConfigService::Value &prev) {
     auto &theme = ThemeService::instance();
     bool themeChangeRequired =
@@ -193,9 +190,9 @@ void CliServerCommand::run(CLI::App *app) {
         next.theme.iconTheme && next.theme.iconTheme.value_or("") != prev.theme.iconTheme.value_or("");
     IconThemeDatabase iconThemeDb;
 
-    if (next.font.baseSize != prev.font.baseSize) {
-      theme.setFontBasePointSize(next.font.baseSize);
+    theme.setFontBasePointSize(next.font.baseSize);
 
+    if (next.font.baseSize != prev.font.baseSize) {
       if (!themeChangeRequired) { theme.reloadCurrentTheme(); }
     }
 
@@ -206,11 +203,10 @@ void CliServerCommand::run(CLI::App *app) {
 
     FaviconService::instance()->setService(next.faviconService);
 
-    if (next.theme.iconTheme) { QIcon::setThemeName(*next.theme.iconTheme); }
-
-    if (!iconThemeDb.isSuitableTheme(QIcon::themeName())) {
-      // try vicinae theme
-      QIcon::setThemeName(Omnicast::DEFAULT_ICON_THEME_NAME);
+    if (next.theme.iconTheme) {
+      QIcon::setThemeName(*next.theme.iconTheme);
+    } else if (QIcon::themeName() == "hicolor") {
+      QIcon::setThemeName(iconThemeDb.guessBestTheme());
     }
 
     if (next.font.normal && *next.font.normal != prev.font.normal.value_or("")) {

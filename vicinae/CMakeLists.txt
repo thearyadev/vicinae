@@ -10,6 +10,7 @@ list(APPEND LIBS  Qt6::Widgets Qt6::Sql Qt6::Network Qt6::Svg Qt6::DBus ${CMARK_
 
 set(WLR_CLIP_BIN ${CMAKE_BINARY_DIR}/wlr-clip/wlr-clip${CMAKE_EXECUTABLE_SUFFIX})
 set(ASSET_PATH ${CMAKE_CURRENT_SOURCE_DIR}/assets)
+set(EXTRA_PATH ${CMAKE_SOURCE_DIR}/extra)
 configure_file(resources.qrc.in resources.qrc)
 
 if (WAYLAND_LAYER_SHELL)
@@ -52,6 +53,8 @@ set(SRCS
 
 	src/cli/cli.hpp
 	src/cli/cli.cpp
+	src/cli/theme.hpp
+	src/cli/theme.cpp
 	src/cli/server.hpp
 	src/cli/server.cpp
 
@@ -147,6 +150,9 @@ set(SRCS
 	src/services/clipboard/clipboard-db.cpp
 	src/services/clipboard/wlr/wlr-clipboard-server.hpp
 	src/services/clipboard/wlr/wlr-clipboard-server.cpp
+	src/services/clipboard/qt/qt-clipboard-server.hpp
+	src/services/clipboard/qt/qt-clipboard-server.cpp
+	src/services/clipboard/x11/x11-clipboard-server.hpp
 	src/services/clipboard/dummy/dummy-clipboard-server.hpp
 	src/services/clipboard/dummy/dummy-clipboard-server.cpp
 	src/services/clipboard/clipboard-server-factory.hpp
@@ -285,8 +291,6 @@ set(SRCS
 		src/ui/image/url.hpp
 
 
-	src/calculator-history-command.hpp
-
 	include/create-quicklink-command.hpp
 
 	include/builtin_icon.hpp
@@ -386,11 +390,22 @@ set(SRCS
 	src/ui/omni-tree/omni-tree.hpp
 	src/ui/omni-tree/omni-tree.cpp
 
+	src/theme/theme-file.hpp
+	src/theme/theme-file.cpp
+	src/theme/theme-parser.hpp
+	src/theme/theme-parser.cpp
+	src/theme/theme-db.hpp
+	src/theme/theme-db.cpp
+
 	src/extensions/vicinae/search-emojis/search-emojis-view.hpp
 	src/extensions/vicinae/search-emojis/search-emojis-view.cpp
 	src/extensions/clipboard/clipboard-history-command.cpp
 	src/extensions/clipboard/history/clipboard-history-view.hpp
 	src/extensions/clipboard/history/clipboard-history-view.cpp
+	src/extensions/calculator/history/calculator-history-view.hpp
+	src/extensions/calculator/history/calculator-history-view.cpp
+	src/extensions/theme/manage/manage-themes-view.hpp
+	src/extensions/theme/manage/manage-themes-view.cpp
 
 	src/extensions/raycast/store/store-detail-view.cpp
 	src/extensions/raycast/store/store-listing-view.cpp
@@ -535,6 +550,7 @@ set(SRCS
 	src/ui/shortcut-button/shortcut-button.cpp
 
 	src/ui/search-bar/search-bar.hpp
+	src/ui/search-bar/search-bar.cpp
 
 	src/ui/vertical-scroll-area/vertical-scroll-area.cpp
 
@@ -647,6 +663,14 @@ endif()
 
 target_include_directories(${TARGET} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(${TARGET} PRIVATE ${LIBS})
+
+if (USE_PRECOMPILED_HEADERS)
+	message(STATUS "Precompiled headers are enabled")
+	target_precompile_headers(${TARGET} PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_SOURCE_DIR}/src/pch.h>")
+	set(CMAKE_PCH_INSTANTIATE_TEMPLATES ON)
+else()
+	message(STATUS "Precompiled headers are disabled")
+endif()
 
 make_directory(${CMAKE_CURRENT_BINARY_DIR}/proto)
 

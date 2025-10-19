@@ -38,7 +38,7 @@ option(USE_SYSTEM_LAYER_SHELL "Use system qt layer shell instead of building it 
 option(USE_SYSTEM_QT_KEYCHAIN "Use system qt-keychain instead of building it from source. Note: still depends on system libsecret." ON)
 option(USE_SYSTEM_RAPIDFUZZ "Use system version of the rapidfuzz-cpp header only library" ON)
 option(LIBQALCULATE_BACKEND "Compile in support for the Qalculate! calculator backend" ON)
-
+option(USE_PRECOMPILED_HEADERS "Use precompiled headers to speed up compilation" ON)
 
 option(BUILD_TESTS "Build all vicinae tests" OFF)
 
@@ -162,7 +162,7 @@ set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3")
 set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release ReleaseHost)
 
 if (NOT NOSTRIP AND NOT ${CMAKE_BUILD_TYPE} MATCHES "Debug")
-	set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -s")
+	#set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -s")
 	message(STATUS "Built binaries will be stripped")
 endif()
 
@@ -185,6 +185,7 @@ if (LTO)
 	message(STATUS "Link Time Optimization (LTO) is enabled")
 	# gcc needs 'auto' to enable parallel compilation: https://stackoverflow.com/questions/72218980/gcc-v12-1-warning-about-serial-compilation
 	add_compile_options(-flto=auto)
+	add_link_options(-flto=auto)
 endif()
 
 if (CCACHE AND NOT IGNORE_CCACHE) 
@@ -219,9 +220,10 @@ endif()
 
 set(INSTALL_SHARE ${CMAKE_INSTALL_PREFIX}/share)
 set(VICINAE_INSTALL_SHARE ${INSTALL_SHARE}/vicinae)
+set(VICINAE_THEME_DIR ${VICINAE_INSTALL_SHARE}/themes)
 
 make_directory(${VICINAE_INSTALL_SHARE})
-
+file(REMOVE_RECURSE ${VICINAE_THEME_DIR})
 install(DIRECTORY ./extra/themes DESTINATION ${VICINAE_INSTALL_SHARE})
 
 if (UNIX AND NOT APPLE)
@@ -229,26 +231,6 @@ if (UNIX AND NOT APPLE)
 	set(APP_DIR ${INSTALL_SHARE}/applications)
 	make_directory(${APP_DIR})
 	install(FILES ./extra/vicinae.desktop DESTINATION ${APP_DIR})
-
-	# install default icon set
-	set(ICON_DIR ${INSTALL_SHARE}/icons)
-	set(ICON_THEME_ARCHIVE ${CMAKE_SOURCE_DIR}/extra/icons/vicinae-icon-theme.tar.gz)
-	set(ICON_THEME_STAMP "${CMAKE_BINARY_DIR}/icon-theme.stamp")
-	set(ICON_BINARY_DIR "${CMAKE_BINARY_DIR}/icons")
-
-	add_custom_command(
-		OUTPUT "${ICON_THEME_STAMP}"
-		COMMAND ${CMAKE_COMMAND} -E tar xzf "${ICON_THEME_ARCHIVE}"
-		COMMAND ${CMAKE_COMMAND} -E touch "${ICON_THEME_STAMP}"
-		WORKING_DIRECTORY "${ICON_BINARY_DIR}"
-		DEPENDS "${ICON_THEME_ARCHIVE}"
-		COMMENT "Extracting icon theme..."
-	)
-	add_custom_target(extract_icons DEPENDS "${ICON_THEME_STAMP}")
-	add_dependencies(vicinae extract_icons)
-	make_directory(${ICON_BINARY_DIR})
-	make_directory(${ICON_DIR})
-	install(DIRECTORY ${ICON_BINARY_DIR}/vicinae DESTINATION ${ICON_DIR} COMPONENT icons)
 endif()
 
 
