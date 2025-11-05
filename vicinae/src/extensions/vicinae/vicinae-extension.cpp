@@ -1,6 +1,7 @@
 #include "vicinae-extension.hpp"
 #include "command-controller.hpp"
 #include "common.hpp"
+#include "extensions/vicinae/list-installed-extensions-command.hpp"
 #include "extensions/vicinae/report-bug-command.hpp"
 #include "navigation-controller.hpp"
 #include "open-about-command.hpp"
@@ -8,6 +9,7 @@
 #include "browse-icons-command.hpp"
 #include "configure-fallback-command.hpp"
 #include "extensions/vicinae/search-emoji-command.hpp"
+#include "extensions/vicinae/vicinae-store-command.hpp"
 #include "../../ui/image/url.hpp"
 #include "builtin-url-command.hpp"
 #include "single-view-command-context.hpp"
@@ -103,4 +105,6 @@ VicinaeExtension::VicinaeExtension() {
   registerCommand<OpenDiscordCommand>();
   registerCommand<SponsorVicinaeCommand>();
   registerCommand<OpenKeybindSettingsCommand>();
+  registerCommand<VicinaeStoreCommand>();
+  registerCommand<VicinaeListInstalledExtensionsCommand>();
 }

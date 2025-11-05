@@ -634,6 +634,34 @@ bool OmniList::selectRight() {
   return false;
 }
 
+bool OmniList::selectHome() {
+  if (m_items.empty()) return false;
+
+  // Find the first selectable item
+  for (int i = 0; i < m_items.size(); ++i) {
+    if (m_items[i].item->selectable()) {
+      setSelectedIndex(i, ScrollBehaviour::ScrollAbsolute);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool OmniList::selectEnd() {
+  if (m_items.empty()) return false;
+
+  // Find the last selectable item
+  for (int i = m_items.size() - 1; i >= 0; --i) {
+    if (m_items[i].item->selectable()) {
+      setSelectedIndex(i, ScrollBehaviour::ScrollAbsolute);
+      return true;
+    }
+  }
+
+  return false;
+}
+
 void OmniList::setSelectedIndex(int index, ScrollBehaviour scrollBehaviour) {
   int oldIndex = m_selected;
 
@@ -761,6 +789,10 @@ bool OmniList::event(QEvent *event) {
       return selectLeft();
     case Qt::Key_Right:
       return selectRight();
+    case Qt::Key_Home:
+      return selectHome();
+    case Qt::Key_End:
+      return selectEnd();
     case Qt::Key_Return:
       activateCurrentSelection();
       return true;
@@ -804,10 +836,7 @@ const OmniList::AbstractVirtualItem *OmniList::selected() const {
 }
 
 void OmniList::refresh() const {
-  for (int i = 0; i != visibleIndexRange.size; ++i) {
-    int index = visibleIndexRange.start + i;
-    auto item = m_items.at(index).item;
-
+  for (const auto &item : visibleItems()) {
     if (auto it = _widgetCache.find(item->id()); it != _widgetCache.end()) {
       item->refresh(it->second.widget->widget());
     }

@@ -35,6 +35,12 @@ bool ListView::inputFilter(QKeyEvent *event) {
     case Qt::Key_Down:
       return m_list->selectDown();
       break;
+    case Qt::Key_Home:
+      return m_list->selectHome();
+      break;
+    case Qt::Key_End:
+      return m_list->selectEnd();
+      break;
     case Qt::Key_Return:
     case Qt::Key_Enter:
       m_list->activateCurrentSelection();
@@ -46,6 +52,8 @@ bool ListView::inputFilter(QKeyEvent *event) {
 }
 
 void ListView::itemSelected(const OmniList::AbstractVirtualItem *item) {}
+
+void ListView::forceReselection() { selectionChanged(m_list->selected(), nullptr); }
 
 void ListView::selectionChanged(const OmniList::AbstractVirtualItem *next,
                                 const OmniList::AbstractVirtualItem *previous) {
@@ -127,7 +135,7 @@ ListView::ListView(QWidget *parent) : SimpleView(parent) {
   connect(m_list, &OmniList::itemActivated, this, &ListView::itemActivated);
   connect(m_list, &OmniList::itemRightClicked, this, &ListView::itemRightClicked);
   connect(m_list, &OmniList::virtualHeightChanged, this, [this](int height) {
-    if (m_list->items().empty() && !searchText().isEmpty()) {
+    if (m_list->items().empty() && (!searchText().isEmpty() || !isLoading())) {
       // ui->destroyCompleter();
       m_content->setCurrentWidget(m_emptyView);
       return;

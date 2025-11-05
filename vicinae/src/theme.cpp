@@ -8,12 +8,12 @@
 #include <QStyleHints>
 #include <qapplication.h>
 #include <qpalette.h>
+#include <qpixmapcache.h>
 
 void ThemeService::setTheme(const ThemeFile &info) {
   m_theme = std::make_unique<ThemeFile>(info);
 
   double mainInputSize = std::round(m_baseFontPointSize * 1.20);
-
   auto palette = QApplication::palette();
 
   palette.setBrush(QPalette::WindowText, info.resolve(SemanticColor::Foreground));
@@ -28,6 +28,7 @@ void ThemeService::setTheme(const ThemeFile &info) {
   Timer timer;
   QApplication::setPalette(palette);
   timer.time("Theme changed");
+  QPixmapCache::clear();
   emit themeChanged(info);
 }
 
@@ -95,6 +96,26 @@ QString ThemeService::inputStyleSheet() {
 
 		QLineEdit[form-input="true"]:focus, QTextEdit[form-input="true"]:focus, QPlainTextEdit[form-input="true"]:focus  {
 			border-color: {INPUT_FOCUS_BORDER_COLOR};
+		}
+	)");
+
+  return style;
+}
+
+QString ThemeService::nativeFilePickerStyleSheet() {
+  TemplateEngine engine;
+
+  engine.setVar("BACKGROUND", m_theme->resolveAsString(SemanticColor::SecondaryBackground));
+  engine.setVar("FOREGROUND", m_theme->resolveAsString(SemanticColor::Foreground));
+
+  /**
+   * We try to not use stylesheets directly in most of the app, but some very high level
+   * rules can help fix issues that would be hard to fix otherwise.
+   */
+  auto style = engine.build(R"(
+  		QWidget {
+			background-color: {BACKGROUND};
+			color: {FOREGROUND};
 		}
 	)");
 

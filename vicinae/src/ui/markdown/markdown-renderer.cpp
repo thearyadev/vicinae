@@ -5,8 +5,12 @@
 #include "ui/image/http-image-loader.hpp"
 #include "ui/image/image.hpp"
 #include "ui/image/local-image-loader.hpp"
+#include "ui/image/data-uri-image-loader.hpp"
 #include "ui/scroll-bar/scroll-bar.hpp"
+#include "services/app-service/app-service.hpp"
 #include <cmark-gfm.h>
+#include <cmark-gfm-core-extensions.h>
+#include <cmark-gfm-extension_api.h>
 #include <qapplication.h>
 #include <qboxlayout.h>
 #include <qevent.h>
@@ -21,13 +25,16 @@
 #include <qstringview.h>
 #include <QTextDocumentFragment>
 #include <QTextList>
+#include <qtextbrowser.h>
 #include <qtextcursor.h>
 #include <qtextdocument.h>
 #include <qtextformat.h>
 #include <qtextlist.h>
+#include <qtexttable.h>
 #include <qurl.h>
 #include <qurlquery.h>
 #include "services/config/config-service.hpp"
+#include "services/asset-resolver/asset-resolver.hpp"
 
 int MarkdownRenderer::getHeadingLevelPointSize(int level) const {
   auto factor = HEADING_LEVEL_SCALE_FACTORS[std::clamp(level, 1, 4)];
@@ -73,7 +80,7 @@ void MarkdownRenderer::insertImage(cmark_node *node) {
   QUrlQuery query(url);
   auto documentMargin = _document->documentMargin();
   int widthOffset = documentMargin * 4;
-  QSize iconSize(size().width() - widthOffset, size().height() - documentMargin * 2);
+  QSize iconSize(0, 0);
 
   for (const auto &attr : widthAttributes) {
     if (auto value = query.queryItemValue(attr); !value.isEmpty()) {
@@ -93,36 +100,81 @@ void MarkdownRenderer::insertImage(cmark_node *node) {
     // implement for tint
   }
 
+  insertImageFromUrl(url, iconSize);
+}
+
+void MarkdownRenderer::insertImageFromUrl(const QUrl &url, const QSize &iconSize) {
   std::unique_ptr<AbstractImageLoader> imageLoader;
 
-  if (url.scheme() == "https") {
+  if (url.scheme() == "https" || url.scheme() == "http") {
     imageLoader = std::make_unique<HttpImageLoader>(url);
+  } else if (url.scheme() == "data") {
+    imageLoader = std::make_unique<DataUriImageLoader>(url.toString());
+  } else if (url.scheme() == "file") {
+    std::filesystem::path path = url.host().isEmpty()
+                                     ? url.path().toStdString()
+                                     : QString("%1%2").arg(url.host()).arg(url.path()).toStdString();
+    imageLoader = std::make_unique<LocalImageLoader>(path);
   } else {
+    // Resolve relative image paths
     std::filesystem::path path = QString("%1%2").arg(url.host()).arg(url.path()).toStdString();
-
+    if (auto resolved = RelativeAssetResolver::instance()->resolve(path)) { path = *resolved; }
     imageLoader = std::make_unique<LocalImageLoader>(path);
   }
 
+  QString loaderName = QUuid::createUuid().toString(QUuid::WithoutBraces);
+
+  // Save current cursor position for image resizing after load
   auto pos = _cursor.position();
 
-  connect(imageLoader.get(), &AbstractImageLoader::dataUpdated, this, [this, url, pos](const QPixmap &pix) {
-    auto old = _cursor.position();
+  // Create an image
+  _cursor.insertImage(loaderName);
 
-    _cursor.setPosition(pos);
-    _document->addResource(QTextDocument::ImageResource, url, pix);
+  m_imageLoaders[loaderName] = std::move(imageLoader);
+  auto *loader = m_imageLoaders[loaderName].get();
+  connect(loader, &AbstractImageLoader::dataUpdated, this,
+          [this, loaderName, pos, iconSize](const QPixmap &pix) {
+            auto old = _cursor.position();
 
-    QTextBlockFormat blockFormat = _cursor.blockFormat();
+            // Select the placeholder image
+            _cursor.setPosition(pos);
+            _cursor.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
 
-    blockFormat.setAlignment(Qt::AlignCenter);
+            QSize finalSize = iconSize;
 
-    _cursor.setBlockFormat(blockFormat);
-    _cursor.insertImage(url.toString());
-    _cursor.setPosition(old);
-    _document->markContentsDirty(0, _document->characterCount());
-  });
+            // Calculate size maintaining aspect ratio
+            if (iconSize.width() > 0 && iconSize.height() == 0) {
+              // Only width specified, calculate height
+              qreal aspectRatio = static_cast<qreal>(pix.width()) / pix.height();
+              finalSize.setHeight(static_cast<int>(iconSize.width() / aspectRatio));
+            } else if (iconSize.height() > 0 && iconSize.width() == 0) {
+              // Only height specified, calculate width
+              qreal aspectRatio = static_cast<qreal>(pix.width()) / pix.height();
+              finalSize.setWidth(static_cast<int>(iconSize.height() * aspectRatio));
+            } else if (iconSize.width() == 0 && iconSize.height() == 0) {
+              // No size specified, use original image size
+              finalSize = QSize(pix.width(), pix.height());
+            }
 
-  imageLoader->render({.size = iconSize, .devicePixelRatio = devicePixelRatio()});
-  m_images.push_back({.cursorPos = pos, .icon = std::move(imageLoader)});
+            // Set image size
+            QTextImageFormat imageFormat = _cursor.charFormat().toImageFormat();
+            imageFormat.setWidth(finalSize.width());
+            imageFormat.setHeight(finalSize.height());
+            imageFormat.setMaximumWidth(QTextLength(QTextLength::PercentageLength, 100));
+            _cursor.setCharFormat(imageFormat);
+
+            // Set block alignment to center
+            QTextBlockFormat blockFormat = _cursor.blockFormat();
+            blockFormat.setAlignment(Qt::AlignCenter);
+            _cursor.setBlockFormat(blockFormat);
+
+            _document->addResource(QTextDocument::ImageResource, loaderName, pix);
+
+            _cursor.clearSelection();
+            _cursor.setPosition(old);
+          });
+
+  loader->render({.size = QSize(INT_MAX, INT_MAX), .devicePixelRatio = devicePixelRatio()});
 }
 
 void MarkdownRenderer::insertCodeBlock(cmark_node *node, bool isClosing) {
@@ -152,6 +204,179 @@ void MarkdownRenderer::insertCodeBlock(cmark_node *node, bool isClosing) {
 
   _cursor.insertText(code.trimmed(), fontFormat);
   _cursor.setPosition(frame->lastPosition());
+  _cursor.movePosition(QTextCursor::NextCharacter);
+}
+
+void MarkdownRenderer::insertTable(cmark_node *node) {
+  // Ensure we are on a new block before inserting the table
+  insertIfNotFirstBlock();
+
+  // Identify header/body sections if present
+  cmark_node *header = nullptr;
+  cmark_node *body = nullptr;
+  std::vector<cmark_node *> extraBodyRows;
+  for (auto *child = cmark_node_first_child(node); child; child = cmark_node_next(child)) {
+    switch (getGfmNodeType(child)) {
+    case GfmNodeType::TableHeader:
+      header = child;
+      break;
+    case GfmNodeType::TableBody:
+      body = child;
+      break;
+    case GfmNodeType::TableRow:
+      extraBodyRows.push_back(child);
+      break;
+    default:
+      break;
+    }
+  }
+
+  // Get the number of columns
+  int columnCount = cmark_gfm_extensions_get_table_columns(node);
+  if (columnCount <= 0) { return; }
+
+  // Counts the number of rows from either header or body
+  auto countRowsFromSection = [&](cmark_node *section) {
+    if (!section) return 0;
+    auto *first = cmark_node_first_child(section);
+    if (!first) return 0;
+    if (getGfmNodeType(first) == GfmNodeType::TableCell) {
+      return 1; // single row represented by direct cells
+    }
+    int rows = 0;
+    for (auto *row = first; row; row = cmark_node_next(row)) {
+      if (getGfmNodeType(row) == GfmNodeType::TableRow) { ++rows; }
+    }
+    return rows;
+  };
+
+  // Counts the total number of rows (header, body, and rows)
+  int headerRows = countRowsFromSection(header);
+  int bodyRows = countRowsFromSection(body);
+  int extraRows = static_cast<int>(extraBodyRows.size());
+  int rowCount = headerRows + bodyRows + extraRows;
+
+  // Create QTextTable with styling
+  QTextTableFormat tableFormat;
+  tableFormat.setCellPadding(8);
+  tableFormat.setCellSpacing(0);
+  tableFormat.setBorder(1);
+  tableFormat.setWidth(QTextLength(QTextLength::PercentageLength, 100));
+  tableFormat.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
+
+  QTextTable *table = _cursor.insertTable(rowCount, columnCount, tableFormat);
+
+  // Determine per-column alignment (default to left)
+  // https://github.com/github/cmark-gfm/blob/587a12bb54d95ac37241377e6ddc93ea0e45439b/extensions/table.c#L589-L592
+  std::vector<Qt::Alignment> columnAlignment(columnCount, Qt::AlignLeft);
+  if (auto *alignments = cmark_gfm_extensions_get_table_alignments(node)) {
+    for (int c = 0; c < columnCount; ++c) {
+      switch (alignments[c]) {
+      case 'l':
+        columnAlignment[c] = Qt::AlignLeft;
+        break;
+      case 'c':
+        columnAlignment[c] = Qt::AlignHCenter;
+        break;
+      case 'r':
+        columnAlignment[c] = Qt::AlignRight;
+        break;
+      default:
+        columnAlignment[c] = Qt::AlignLeft;
+        break;
+      }
+    }
+  }
+
+  // Text Formatting
+  OmniPainter painter;
+  QTextCharFormat defaultTextFormat;
+  defaultTextFormat.setFont(_document->defaultFont());
+  defaultTextFormat.setForeground(painter.resolveColor(SemanticColor::Foreground));
+  QTextCharFormat headerTextFormat = defaultTextFormat;
+  headerTextFormat.setFontWeight(QFont::DemiBold);
+
+  // Cell Formatting
+  QTextCharFormat headerCellFormat;
+  headerCellFormat.setBackground(painter.resolveColor(SemanticColor::SecondaryBackground));
+
+  // Renders all inline/block content inside a table cell
+  auto renderCellContents = [&](cmark_node *cell, bool isHeader) {
+    QTextCharFormat fmt = isHeader ? headerTextFormat : defaultTextFormat;
+    for (auto *content = cmark_node_first_child(cell); content; content = cmark_node_next(content)) {
+      switch (cmark_node_get_type(content)) {
+      case CMARK_NODE_PARAGRAPH:
+        insertParagraph(content);
+        break;
+      case CMARK_NODE_IMAGE:
+        insertImage(content);
+        break;
+      case CMARK_NODE_HTML_INLINE: {
+        QString html = cmark_node_get_literal(content);
+        parseAndInsertHtmlImages(html);
+        break;
+      }
+      default:
+        insertSpan(content, fmt);
+        break;
+      }
+    }
+  };
+
+  // Renders a list of cells for a given row
+  auto renderCellsList = [&](cmark_node *firstCell, int rowIdx, bool isHeader) {
+    int c = 0;
+    for (auto *cell = firstCell; cell && c < columnCount; cell = cmark_node_next(cell)) {
+      if (getGfmNodeType(cell) != GfmNodeType::TableCell) { continue; }
+      QTextTableCell qtCell = table->cellAt(rowIdx, c);
+      if (isHeader) { qtCell.setFormat(headerCellFormat); }
+      QTextCursor prevCursor = _cursor;
+      _cursor = qtCell.firstCursorPosition();
+      // Apply column alignment
+      {
+        QTextBlockFormat bf = _cursor.blockFormat();
+        bf.setAlignment(columnAlignment[c]);
+        _cursor.setBlockFormat(bf);
+      }
+      renderCellContents(cell, isHeader);
+      _cursor = prevCursor;
+      ++c;
+    }
+  };
+
+  // Renders a section of the table (header or body)
+  auto renderSection = [&](cmark_node *section, bool isHeader, int &rowIndex) {
+    if (!section) return;
+    auto *first = cmark_node_first_child(section);
+    if (!first) return;
+
+    // Direct table_cell children: render a single row
+    if (getGfmNodeType(first) == GfmNodeType::TableCell) {
+      renderCellsList(first, rowIndex, isHeader);
+      ++rowIndex;
+      return;
+    }
+
+    // table_row children: render each row
+    for (auto *row = first; row; row = cmark_node_next(row)) {
+      if (getGfmNodeType(row) != GfmNodeType::TableRow) { continue; }
+      renderCellsList(cmark_node_first_child(row), rowIndex, isHeader);
+      ++rowIndex;
+    }
+  };
+
+  int rowIndex = 0;
+  renderSection(header, true, rowIndex);
+  renderSection(body, false, rowIndex);
+  // Render any table_row children directly under the table node as body rows
+  for (auto *row : extraBodyRows) {
+    renderCellsList(cmark_node_first_child(row), rowIndex, false);
+    ++rowIndex;
+  }
+
+  // Ensure subsequent content is inserted AFTER the table.
+  // By default, after insertTable the cursor remains inside the first cell.
+  _cursor.setPosition(table->lastPosition());
   _cursor.movePosition(QTextCursor::NextCharacter);
 }
 
@@ -291,6 +516,11 @@ void MarkdownRenderer::insertParagraph(cmark_node *node) {
       if (_lastNodeType == CMARK_NODE_HEADING) insertIfNotFirstBlock();
       insertImage(child);
       break;
+    case CMARK_NODE_HTML_INLINE: {
+      QString html = cmark_node_get_literal(child);
+      parseAndInsertHtmlImages(html);
+      break;
+    }
     default:
       insertSpan(child, fmt);
       _cursor.setCharFormat(defaultFormat);
@@ -301,6 +531,57 @@ void MarkdownRenderer::insertParagraph(cmark_node *node) {
     child = cmark_node_next(child);
   }
   _cursor.setCharFormat(defaultFormat);
+}
+
+void MarkdownRenderer::parseAndInsertHtmlImages(const QString &html) {
+  insertIfNotFirstBlock();
+
+  // for default size when width/height is not specified
+  auto documentMargin = _document->documentMargin();
+  int widthOffset = documentMargin * 4;
+  QSize imgSize(0, 0);
+
+  // 1. Regex to find all <img> tags.
+  // This captures the *entire* tag open.
+  QRegularExpression imgTagRegex(R"(<img\s+(?:[^>"']|"[^"]*"|'[^']*')*>)",
+                                 QRegularExpression::CaseInsensitiveOption);
+
+  // 2. Regex to find specific attributes *within* a tag.
+  // (src|width|height) = Capture 1: the attribute name
+  // (["'])             = Capture 2: the opening quote (double or single)
+  // (.*?)              = Capture 3: the attribute value (non-greedy)
+  // \2                 = Matches the closing quote from Capture 2
+  QRegularExpression attrRegex(R"(\s+(src|width|height)=(["'])(.*?)\2)",
+                               QRegularExpression::CaseInsensitiveOption);
+
+  // Find all <img> tags in the input
+  auto tagIter = imgTagRegex.globalMatch(html);
+
+  while (tagIter.hasNext()) {
+    QRegularExpressionMatch tagMatch = tagIter.next();
+    QString imgTag = tagMatch.captured(0);
+
+    QString src;
+
+    // Find all attributes in this tag
+    auto attrIter = attrRegex.globalMatch(imgTag);
+    while (attrIter.hasNext()) {
+      QRegularExpressionMatch attrMatch = attrIter.next();
+
+      QString name = attrMatch.captured(1).toLower();
+      QString value = attrMatch.captured(3);
+
+      if (name == "src") {
+        src = value;
+      } else if (name == "width") {
+        if (!value.isEmpty()) { imgSize.setWidth(value.toInt()); }
+      } else if (name == "height") {
+        if (!value.isEmpty()) { imgSize.setHeight(value.toInt()); }
+      }
+    }
+
+    if (!src.isEmpty()) { insertImageFromUrl(QUrl(src), imgSize); }
+  }
 }
 
 void MarkdownRenderer::setBaseTextColor(const ColorLike &color) { m_baseTextColor = color; }
@@ -332,7 +613,15 @@ void MarkdownRenderer::insertTopLevelNode(cmark_node *node) {
   case CMARK_NODE_CODE_BLOCK:
     insertCodeBlock(node, !!cmark_node_next(node));
     break;
+  case CMARK_NODE_HTML_BLOCK: {
+    QString html = cmark_node_get_literal(node);
+    parseAndInsertHtmlImages(html);
+    break;
+  }
   default:
+    // Handle GFM extension nodes by type string
+    // Extensions get a dynamic type enum value, so can't depend on that
+    if (getGfmNodeType(node) == GfmNodeType::Table) { insertTable(node); }
     break;
   }
 
@@ -377,7 +666,17 @@ void MarkdownRenderer::appendMarkdown(QStringView markdown) {
   }
 
   auto buf = fragment.toUtf8();
-  cmark_node *root = cmark_parse_document(buf.data(), buf.size(), 0);
+
+  // Enable GFM core extensions (tables, etc.) and parse
+  cmark_gfm_core_extensions_ensure_registered();
+  cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
+
+  if (cmark_syntax_extension *tableExt = cmark_find_syntax_extension("table")) {
+    cmark_parser_attach_syntax_extension(parser, tableExt);
+  }
+
+  cmark_parser_feed(parser, buf.data(), buf.size());
+  cmark_node *root = cmark_parser_finish(parser);
   cmark_node *node = cmark_node_first_child(root);
   cmark_node *lastNode = nullptr;
   std::vector<TopLevelBlock> topLevelBlocks;
@@ -428,6 +727,7 @@ void MarkdownRenderer::appendMarkdown(QStringView markdown) {
   }
 
   cmark_node_free(root);
+  cmark_parser_free(parser);
 
   QTextCursor newCursor = _textEdit->textCursor();
 
@@ -444,7 +744,6 @@ void MarkdownRenderer::appendMarkdown(QStringView markdown) {
 
 void MarkdownRenderer::setMarkdown(QStringView markdown) {
   m_isFirstBlock = true;
-  m_images.clear();
   clear();
   appendMarkdown(markdown);
   _cursor.setPosition(0);
@@ -463,7 +762,8 @@ void MarkdownRenderer::setFont(const QFont &font) {
 void MarkdownRenderer::setGrowAsRequired(bool value) { m_growAsRequired = value; }
 
 MarkdownRenderer::MarkdownRenderer()
-    : _document(new QTextDocument), _textEdit(new QTextEdit(this)), _basePointSize(DEFAULT_BASE_POINT_SIZE) {
+    : _document(new QTextDocument), _textEdit(new QTextBrowser(this)),
+      _basePointSize(DEFAULT_BASE_POINT_SIZE) {
   auto layout = new QVBoxLayout;
 
   _lastNodePosition.renderedText = 0;
@@ -472,6 +772,7 @@ MarkdownRenderer::MarkdownRenderer()
   _document->setUseDesignMetrics(true);
   _textEdit->setReadOnly(true);
   _textEdit->setFrameShape(QFrame::NoFrame);
+  _textEdit->setOpenLinks(false); // we handle this ourselves, see below.
   _textEdit->setDocument(_document);
   _textEdit->setVerticalScrollBar(new OmniScrollBar);
   _document->setDocumentMargin(10);
@@ -487,6 +788,11 @@ MarkdownRenderer::MarkdownRenderer()
 
   connect(config, &ConfigService::configChanged, this,
           [this, config]() { _basePointSize = config->value().font.baseSize; });
+  connect(_textEdit, &QTextBrowser::anchorClicked, this, [](const QUrl &url) {
+    if (!ServiceRegistry::instance()->appDb()->openTarget(url)) {
+      qWarning() << "Failed to open link" << url;
+    }
+  });
 
   _cursor = QTextCursor(_document);
 }

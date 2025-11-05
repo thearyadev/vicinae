@@ -2,6 +2,7 @@
 #include <xdgpp/xdgpp.hpp>
 #include "services/app-service/abstract-app-db.hpp"
 #include "utils.hpp"
+#include "xdgpp/desktop-entry/exec.hpp"
 
 class XdgApplication : public AbstractApplication {
   xdgpp::DesktopFile m_entry;
@@ -24,6 +25,11 @@ public:
   QString program() const override {
     auto ss = parseExec({});
     return ss.empty() ? QString() : ss.at(0);
+  }
+
+  std::optional<QString> wmClass() const {
+    return m_entry.startupWMClass().transform(
+        [](const std::string &str) { return QString::fromStdString(str); });
   }
 
   std::vector<QString> windowClasses() const override {
@@ -56,8 +62,11 @@ public:
 
   std::vector<std::shared_ptr<AbstractApplication>> actions() const override;
 
-  virtual std::vector<QString> parseExec(const std::vector<QString> &args) const {
-    return Utils::toQStringVec(m_entry.parseExec(Utils::toStdStringVec(args), true));
+  virtual std::vector<QString> parseExec(const std::vector<QString> &args,
+                                         const std::optional<QString> &prefix = {}) const {
+    auto launchPrefix = prefix.transform([](const QString &str) { return str.toStdString(); });
+    auto parsed = m_entry.parseExec(Utils::toStdStringVec(args), true, launchPrefix);
+    return Utils::toQStringVec(parsed);
   }
 
   XdgApplication(const xdgpp::DesktopFile &file) : m_entry(file) {}

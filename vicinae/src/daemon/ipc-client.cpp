@@ -1,6 +1,7 @@
 #include "ipc-client.hpp"
 #include "proto/daemon.pb.h"
 #include "vicinae.hpp"
+#include <iostream>
 #include <qlocalsocket.h>
 #include <stdexcept>
 
@@ -24,14 +25,70 @@ void DaemonIpcClient::writeRequest(const Daemon::Request &req) {
   m_conn.waitForBytesWritten(1000);
 }
 
+void DaemonIpcClient::launchApp(const std::string &id, const std::vector<std::string> &args,
+                                bool newInstance) {
+  Daemon::Request req;
+  auto launchReq = new proto::ext::daemon::LaunchAppRequest;
+
+  launchReq->set_app_id(id);
+  launchReq->set_new_instance(newInstance);
+
+  for (const auto &arg : args) {
+    launchReq->add_args(arg);
+  }
+
+  req.set_allocated_launch_app(launchReq);
+  auto res = request(req);
+  auto launchRes = res.launch_app();
+
+  if (auto str = launchRes.error(); !str.empty()) { throw std::runtime_error(launchRes.error()); }
+  if (auto focused = launchRes.focused_window_title(); !focused.empty()) {
+    std::cerr << "Focused existing window: " << std::quoted(focused)
+              << "\nPass --new if you want to spawn up a new instance every time." << std::endl;
+  }
+}
+
+std::vector<proto::ext::daemon::AppInfo> DaemonIpcClient::listApps(bool withActions) {
+  Daemon::Request req;
+  auto listReq = new proto::ext::daemon::ListAppsRequest;
+
+  listReq->set_with_actions(withActions);
+
+  req.set_allocated_list_apps(listReq);
+  auto res = request(req);
+  auto listRes = res.list_apps();
+
+  std::vector<proto::ext::daemon::AppInfo> apps;
+  apps.reserve(listRes.apps_size());
+
+  for (const auto &app : listRes.apps()) {
+    apps.push_back(app);
+  }
+
+  return apps;
+}
+
 void DaemonIpcClient::toggle() {
   QUrl url;
-
   url.setScheme(Omnicast::APP_SCHEME);
   url.setHost("toggle");
   if (auto res = deeplink(url); !res) {
     throw std::runtime_error("Failed to toggle: " + res.error().toStdString());
   }
+}
+
+bool DaemonIpcClient::open() {
+  QUrl url;
+  url.setScheme(Omnicast::APP_SCHEME);
+  url.setHost("open");
+  return deeplink(url).has_value();
+}
+
+bool DaemonIpcClient::close() {
+  QUrl url;
+  url.setScheme(Omnicast::APP_SCHEME);
+  url.setHost("close");
+  return deeplink(url).has_value();
 }
 
 proto::ext::daemon::Response DaemonIpcClient::request(const proto::ext::daemon::Request &req) {

@@ -33,7 +33,14 @@ public:
 
   std::vector<ExtensionViewWrapper *> views() const { return m_views; }
 
-  void handleViewPoped() {
+  void handleViewPoped(const BaseView *view) {
+    // Only handle pops for ExtensionViewWrapper views that are in our stack
+    auto wrapper = dynamic_cast<const ExtensionViewWrapper *>(view);
+    if (!wrapper) return;
+
+    auto it = std::find(m_views.begin(), m_views.end(), const_cast<ExtensionViewWrapper *>(wrapper));
+    if (it == m_views.end()) return;
+
     if (m_views.size() > 1) { m_controller->notify("pop-view", {}); }
 
     m_views.pop_back();
@@ -47,6 +54,10 @@ public:
   }
 
   void setDevMode(bool mode) { m_devMode = mode; }
+
+  void setSubtitleOverride(const std::optional<QString> &subtitle) {
+    m_command->setSubtitleOverride(subtitle);
+  }
 
   ExtensionNavigationController(const std::shared_ptr<ExtensionCommand> &command,
                                 NavigationController *navigation, ExtensionManager *manager)

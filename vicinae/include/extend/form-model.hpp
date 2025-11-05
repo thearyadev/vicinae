@@ -54,7 +54,9 @@ struct FormModel {
     PasswordField(const FieldBase &base) : IField(base) {}
   };
 
-  class CheckboxField : public IField {
+  struct CheckboxField : public IField {
+    std::optional<QString> m_label;
+
   public:
     CheckboxField(const FieldBase &base) : IField(base) {}
   };
@@ -71,10 +73,31 @@ struct FormModel {
     DropdownField(const FieldBase &base) : IField(base) {}
   };
 
-  struct TextAreaFieldModel : public FieldBase {
-    bool enableMarkdown;
+  struct TextAreaField : public IField {
+    std::optional<QString> placeholder;
+
+  public:
+    TextAreaField(const FieldBase &base) : IField(base) {}
   };
-  struct DatePickerFieldModel : public FieldBase {};
+
+  struct FilePickerField : public IField {
+    bool allowMultipleSelection = false;
+    bool canChooseDirectories = false;
+    bool canChooseFiles = true;
+    bool showHiddenFiles = false;
+
+  public:
+    FilePickerField(const FieldBase &base) : IField(base) {}
+  };
+
+  struct DatePickerField : public IField {
+    std::optional<QString> min;  // ISO string
+    std::optional<QString> max;  // ISO string
+    std::optional<QString> type; // "date" | "dateTime"
+
+  public:
+    DatePickerField(const FieldBase &base) : IField(base) {}
+  };
   struct InvalidField : public FieldBase {};
 
   struct Separator {};
@@ -83,13 +106,19 @@ struct FormModel {
     std::optional<QString> title;
   };
 
-  using SearchAccessory = std::variant<DropdownModel>;
+  struct LinkAccessoryModel {
+    QString text;
+    QString target;
+  };
+
+  // note: only LinkAccessoryModel is possible right now
+  using FormSearchBarAccessory = std::variant<DropdownModel, LinkAccessoryModel>;
   using Item = std::variant<std::shared_ptr<IField>, Description, Separator>;
 
   bool isLoading;
   bool enableDrafts;
   std::optional<QString> navigationTitle;
-  std::optional<SearchAccessory> accessory;
+  std::optional<FormSearchBarAccessory> searchBarAccessory;
   std::optional<ActionPannelModel> actions;
   std::vector<Item> items;
 

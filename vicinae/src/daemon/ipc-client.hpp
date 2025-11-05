@@ -23,10 +23,14 @@ public:
    */
   std::string dmenu(DMenuListView::DmenuPayload payload);
   void toggle();
+  bool open();
+  bool close();
   tl::expected<void, QString> deeplink(const QUrl &url);
   bool connect();
   void connectOrThrow();
   bool ping();
+  void launchApp(const std::string &id, const std::vector<std::string> &args = {}, bool newInstance = false);
+  std::vector<proto::ext::daemon::AppInfo> listApps(bool withActions = false);
 
 private:
   void writeRequest(const proto::ext::daemon::Request &req);

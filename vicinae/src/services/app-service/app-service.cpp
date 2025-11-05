@@ -25,7 +25,12 @@ std::vector<std::filesystem::path> AppService::mergedPaths() const {
 AbstractAppDatabase *AppService::provider() const { return m_provider.get(); }
 
 bool AppService::launch(const AbstractApplication &app, const std::vector<QString> &args) const {
-  return m_provider->launch(app, args);
+  return m_provider->launch(app, args, m_prefix);
+}
+
+bool AppService::launchTerminalCommand(const std::vector<QString> &cmdLine,
+                                       const LaunchTerminalCommandOptions &opts) {
+  return m_provider->launchTerminalCommand(cmdLine, opts, m_prefix);
 }
 
 std::unique_ptr<AbstractAppDatabase> AppService::createLocalProvider() {
@@ -77,6 +82,8 @@ bool AppService::openTarget(const QString &target) const {
   if (auto app = findDefaultOpener(target)) { return launch(*app, {target}); }
   return false;
 }
+
+bool AppService::openTarget(const QUrl &target) const { return openTarget(target.toString()); }
 
 std::vector<fs::path> AppService::defaultSearchPaths() const { return m_provider->defaultSearchPaths(); }
 

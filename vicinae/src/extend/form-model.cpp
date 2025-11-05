@@ -1,8 +1,9 @@
 #include "extend/form-model.hpp"
 #include <qjsonobject.h>
 
-const static std::vector<QString> fieldTypes = {"dropdown-field", "password-field",    "text-field",
-                                                "checkbox-field", "date-picker-field", "text-area-field"};
+const static std::vector<QString> fieldTypes = {"dropdown-field",   "password-field",    "text-field",
+                                                "checkbox-field",   "date-picker-field", "text-area-field",
+                                                "file-picker-field"};
 
 FormModel FormModel::fromJson(const QJsonObject &json) {
   FormModel model;
@@ -26,7 +27,7 @@ FormModel FormModel::fromJson(const QJsonObject &json) {
 
     if (type == "action-panel") {
       model.actions = ActionPannelParser().parse(obj);
-    } else if (type == "form-separator") {
+    } else if (type == "separator") {
       model.items.push_back(Separator{});
     } else if (type == "form-description") {
       Description desc;
@@ -35,6 +36,12 @@ FormModel FormModel::fromJson(const QJsonObject &json) {
       if (props.contains("title")) desc.title = props.value("title").toString();
 
       model.items.push_back(desc);
+
+    } else if (type == "link-accessory") {
+      FormModel::LinkAccessoryModel link;
+      link.text = props.value("text").toString();
+      link.target = props.value("target").toString();
+      model.searchBarAccessory = link;
 
     } else if (auto it = std::find(fieldTypes.begin(), fieldTypes.end(), type); it != fieldTypes.end()) {
       FieldBase base;
@@ -64,9 +71,19 @@ FormModel FormModel::fromJson(const QJsonObject &json) {
       } else if (*it == "password-field") {
         model.items.emplace_back(std::make_shared<PasswordField>(base));
       } else if (*it == "checkbox-field") {
-        model.items.emplace_back(std::make_shared<CheckboxField>(base));
+        auto checkbox = std::make_shared<CheckboxField>(base);
+        if (props.contains("label")) checkbox->m_label = props.value("label").toString();
+        model.items.emplace_back(checkbox);
       } else if (*it == "date-picker-field") {
+        auto dp = std::make_shared<DatePickerField>(base);
+        if (props.contains("min")) dp->min = props.value("min").toString();
+        if (props.contains("max")) dp->max = props.value("max").toString();
+        if (props.contains("type")) dp->type = props.value("type").toString();
+        model.items.emplace_back(dp);
       } else if (*it == "text-area-field") {
+        auto ta = std::make_shared<TextAreaField>(base);
+        if (props.contains("placeholder")) ta->placeholder = props.value("placeholder").toString();
+        model.items.emplace_back(ta);
       } else if (*it == "dropdown-field") {
         auto dropdown = std::make_shared<DropdownField>(base);
 
@@ -86,6 +103,19 @@ FormModel FormModel::fromJson(const QJsonObject &json) {
         }
 
         model.items.emplace_back(dropdown);
+      } else if (*it == "file-picker-field") {
+        auto filePicker = std::make_shared<FilePickerField>(base);
+
+        if (props.contains("allowMultipleSelection"))
+          filePicker->allowMultipleSelection = props.value("allowMultipleSelection").toBool();
+        if (props.contains("canChooseDirectories"))
+          filePicker->canChooseDirectories = props.value("canChooseDirectories").toBool();
+        if (props.contains("canChooseFiles"))
+          filePicker->canChooseFiles = props.value("canChooseFiles").toBool();
+        if (props.contains("showHiddenFiles"))
+          filePicker->showHiddenFiles = props.value("showHiddenFiles").toBool();
+
+        model.items.emplace_back(filePicker);
       }
     } else {
       qWarning() << "Unknown form children of type" << type;

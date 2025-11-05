@@ -1,7 +1,10 @@
 #include "wayland.hpp"
+#include "environment.hpp"
 #include "services/window-manager/abstract-window-manager.hpp"
 
+#include <qscreen.h>
 #include <wayland-client-protocol.h>
+#include "wayland/virtual-keyboard.hpp"
 #include "wlr-foreign-toplevel-management-unstable-v1-client-protocol.h"
 
 // Events
@@ -101,6 +104,18 @@ AbstractWindowManager::WindowPtr WaylandWindowManager::getFocusedWindowSync() co
   return nullptr;
 }
 
+bool WaylandWindowManager::pasteToWindow(const AbstractWindow *window, const AbstractApplication *app) {
+  using VK = Wayland::VirtualKeyboard;
+
+  if (!m_keyboard.isAvailable()) { return false; }
+
+  if (app && app->isTerminalEmulator()) {
+    return m_keyboard.sendKeySequence(XKB_KEY_V, VK::MOD_CTRL | VK::MOD_SHIFT);
+  }
+
+  return m_keyboard.sendKeySequence(XKB_KEY_V, VK::MOD_CTRL);
+}
+
 void WaylandWindowManager::focusWindowSync(const AbstractWindow &window) const {
   const WaylandWindow &ww = static_cast<const WaylandWindow &>(window);
   zwlr_foreign_toplevel_handle_v1_activate(ww.m_handle, m_seat);
@@ -113,9 +128,12 @@ bool WaylandWindowManager::closeWindow(const AbstractWindow &window) const {
   return true;
 }
 
-bool WaylandWindowManager::supportsInputForwarding() const { return false; }
+bool WaylandWindowManager::supportsPaste() const { return m_keyboard.isAvailable(); }
 
-bool WaylandWindowManager::isActivatable() const { return QGuiApplication::platformName() == "wayland"; }
+// cosmic needs its own top level management protocol integration
+bool WaylandWindowManager::isActivatable() const {
+  return QGuiApplication::platformName() == "wayland" && !Environment::isCosmicDesktop();
+}
 
 bool WaylandWindowManager::ping() const { return m_manager != nullptr; }
 
@@ -141,6 +159,11 @@ const uint32_t WLR_FOREIGN_TOPLEVEL_VERSION = 3;
 static void handle_global(void *data, struct wl_registry *registry, uint32_t name, const char *interface,
                           uint32_t version) {
   WaylandWindowManager *wm = static_cast<WaylandWindowManager *>(data);
+
+  if (strcmp(interface, wl_output_interface.name) == 0) {
+    wl_output *output =
+        static_cast<wl_output *>(wl_registry_bind(registry, name, &wl_output_interface, version));
+  }
 
   if (strcmp(interface, zwlr_foreign_toplevel_manager_v1_interface.name) == 0) {
     wm->m_manager = (struct zwlr_foreign_toplevel_manager_v1 *)wl_registry_bind(

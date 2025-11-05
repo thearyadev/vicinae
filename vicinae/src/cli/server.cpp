@@ -1,3 +1,4 @@
+#include "daemon/ipc-client.hpp"
 #include "environment.hpp"
 #include "extension/manager/extension-manager.hpp"
 #include "favicon/favicon-service.hpp"
@@ -23,36 +24,56 @@
 #include "services/oauth/oauth-service.hpp"
 #include "services/power-manager/power-manager.hpp"
 #include "services/raycast/raycast-store.hpp"
+#include "services/extension-store/vicinae-store.hpp"
 #include "services/shortcut/shortcut-service.hpp"
 #include "services/toast/toast-service.hpp"
 #include "services/window-manager/window-manager.hpp"
 #include "settings-controller/settings-controller.hpp"
 #include "settings/settings-window.hpp"
-#include "theme/theme-db.hpp"
 #include "ui/launcher-window/launcher-window.hpp"
 #include "vicinae.hpp"
 #include <QString>
+#include <qlogging.h>
+#include <qpixmapcache.h>
+#include <qstylefactory.h>
 #include "lib/CLI11.hpp"
 #include "server.hpp"
 
 static char *argv[] = {strdup("command"), nullptr};
 
 void CliServerCommand::setup(CLI::App *app) {
-  app->add_flag("-d,--detach", m_detach, "Run server in the background");
+  app->add_flag("--open", m_open, "Open the main window once the server is started");
+  app->add_flag("--no-replace", m_noReplace, "Exit with non-zero error code if a server is already running");
 }
 
 void CliServerCommand::run(CLI::App *app) {
   int argc = 1;
-  QApplication qapp(argc, argv);
+  PidFile pidFile(Omnicast::APP_ID.toStdString());
+  DaemonIpcClient client;
+  bool killed = false;
 
   qInstallMessageHandler(coloredMessageHandler);
 
-  std::filesystem::create_directories(Omnicast::runtimeDir());
-  PidFile pidFile(Omnicast::APP_ID.toStdString());
+  if (client.connect() && client.ping() && pidFile.exists()) {
+    if (m_noReplace) {
+      std::cerr
+          << "A server is already running. Omit --no-replace if you want to replace the existing instance."
+          << std::endl;
+      exit(1);
+      if (m_open) { client.open(); }
+      return;
+    }
 
-  if (pidFile.exists() && pidFile.kill()) { qInfo() << "Killed existing vicinae instance"; }
+    pidFile.kill();
+    qInfo() << "Killed existing vicinae instance";
+  }
 
+  QApplication qapp(argc, argv);
+
+  // discard system specific qt theming
+  qapp.setStyle(QStyleFactory::create("fusion"));
   pidFile.write(qApp->applicationPid());
+  std::filesystem::create_directories(Omnicast::runtimeDir());
 
   {
     auto registry = ServiceRegistry::instance();
@@ -74,6 +95,7 @@ void CliServerCommand::run(CLI::App *app) {
     auto fileService = std::make_unique<FileService>(*omniDb);
     auto extensionRegistry = std::make_unique<ExtensionRegistry>(*localStorage);
     auto raycastStore = std::make_unique<RaycastStoreService>();
+    auto vicinaeStore = std::make_unique<VicinaeStoreService>();
 
 #ifdef HAS_TYPESCRIPT_EXTENSIONS
     if (!extensionManager->start()) {
@@ -99,6 +121,7 @@ void CliServerCommand::run(CLI::App *app) {
     registry->setFontService(std::move(fontService));
     registry->setEmojiService(std::move(emojiService));
     registry->setRaycastStore(std::move(raycastStore));
+    registry->setVicinaeStore(std::move(vicinaeStore));
     registry->setExtensionRegistry(std::move(extensionRegistry));
     registry->setOAuthService(std::make_unique<OAuthService>());
     registry->setPowerManager(std::make_unique<PowerManager>());
@@ -162,11 +185,9 @@ void CliServerCommand::run(CLI::App *app) {
 
     // Force reload providers to make sure items that depend on them are shown
     root->updateIndex();
-
-    // Start indexing after registerRepository() so that search paths are configured properly
-    registry->fileService()->indexer()->start();
   }
 
+  QPixmapCache::setCacheLimit(Environment::pixmapCacheLimit());
   FaviconService::initialize(new FaviconService(Omnicast::dataDir() / "favicon"));
   QApplication::setApplicationName("vicinae");
   QApplication::setQuitOnLastWindowClosed(false);
@@ -215,6 +236,12 @@ void CliServerCommand::run(CLI::App *app) {
     }
   };
 
+  if (!Environment::isLayerShellEnabled() && Environment::isCosmicDesktop()) {
+    qWarning() << "Vicinae doesn't use layer-shell on the Cosmic desktop as it is currently broken. See "
+                  "https://github.com/pop-os/cosmic-comp/issues/1590. If you want to force enable it, you "
+                  "can set USE_LAYER_SHELL=1 in your environment.";
+  }
+
   auto cfgService = ServiceRegistry::instance()->config();
 
   QObject::connect(KeybindManager::instance(), &KeybindManager::keybindChanged, [cfgService]() {
@@ -234,7 +261,11 @@ void CliServerCommand::run(CLI::App *app) {
 
   ctx.navigation->launch(std::make_shared<RootCommand>());
 
-  qInfo() << "Vicinae server successfully started. Call \"vicinae toggle\" to toggle the window";
+  if (m_open) {
+    ctx.navigation->showWindow();
+  } else {
+    qInfo() << "Vicinae server successfully started. Call \"vicinae toggle\" to toggle the window";
+  }
 
   qApp->exec();
 }

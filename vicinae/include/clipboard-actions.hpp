@@ -42,15 +42,15 @@ public:
 
     auto appDb = ServiceRegistry::instance()->appDb();
     auto window = wm->getFocusedWindow();
-    QString name;
 
-    if (auto app = appDb->find(window->wmClass())) {
-      name = QString("Paste to %1").arg(app->displayName());
-    } else {
-      name = QString("Paste to %1").arg(window->title());
+    if (window) {
+      if (auto app = appDb->find(window->wmClass())) {
+        return QString("Paste to %1").arg(app->displayName());
+      }
+      return QString("Paste to %1").arg(window->title());
     }
 
-    return name;
+    return "Paste entry";
   }
 
   PasteToFocusedWindowAction(const Clipboard::Content &content = Clipboard::NoData{})
@@ -60,10 +60,7 @@ protected:
   void execute(ApplicationContext *ctx) override {
     auto clipman = ctx->services->clipman();
     ctx->navigation->closeWindow();
-
-    QTimer::singleShot(100, [content = m_content, concealed = m_concealed, clipman]() {
-      clipman->pasteContent(content, {.concealed = concealed});
-    });
+    clipman->pasteContent(m_content, {.concealed = m_concealed});
   }
 
   void loadClipboardData(const Clipboard::Content &content) { m_content = content; }

@@ -8,7 +8,7 @@
 #include <wayland-client-protocol.h>
 #include <wayland-util.h>
 #include "data-control-client.hpp"
-#include "display.hpp"
+#include "lib/wayland/display.hpp"
 
 class Clipman : public WaylandDisplay, public WaylandRegistry::Listener, public DataDevice::Listener {
 

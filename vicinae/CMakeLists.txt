@@ -6,7 +6,7 @@ set(TARGET vicinae)
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Sql Network Svg DBus)
 find_package(OpenSSL REQUIRED)
 
-list(APPEND LIBS  Qt6::Widgets Qt6::Sql Qt6::Network Qt6::Svg Qt6::DBus ${CMARK_LIBRARY} protobuf::libprotobuf minizip OpenSSL::Crypto wayland-client xdgpp qt6keychain)
+list(APPEND LIBS  Qt6::Widgets Qt6::Sql Qt6::Network Qt6::Svg Qt6::DBus ${CMARK_LIBRARY} ${CMARK_EXT_LIBRARY} protobuf::libprotobuf minizip OpenSSL::Crypto wayland-client xdgpp qt6keychain)
 
 set(WLR_CLIP_BIN ${CMAKE_BINARY_DIR}/wlr-clip/wlr-clip${CMAKE_EXECUTABLE_SUFFIX})
 set(ASSET_PATH ${CMAKE_CURRENT_SOURCE_DIR}/assets)
@@ -39,6 +39,7 @@ include_directories(
 	${CMAKE_CURRENT_SOURCE_DIR}/..
 	${Protobuf_INCLUDE_DIRS}
     ${CMAKE_CURRENT_BINARY_DIR}  # For generated headers
+    ${CMAKE_BINARY_DIR}/generated  # For version.h
 )
 
 set(PROTO_SRC_DIR ${CMAKE_SOURCE_DIR}/proto)
@@ -148,8 +149,6 @@ set(SRCS
 	src/services/clipboard/clipboard-server.hpp
 	src/services/clipboard/clipboard-db.hpp
 	src/services/clipboard/clipboard-db.cpp
-	src/services/clipboard/wlr/wlr-clipboard-server.hpp
-	src/services/clipboard/wlr/wlr-clipboard-server.cpp
 	src/services/clipboard/qt/qt-clipboard-server.hpp
 	src/services/clipboard/qt/qt-clipboard-server.cpp
 	src/services/clipboard/x11/x11-clipboard-server.hpp
@@ -233,6 +232,7 @@ set(SRCS
 	include/extension/form/extension-password-field.hpp
 	include/extension/form/extension-checkbox-field.hpp
 	include/extension/form/extension-dropdown.hpp
+	include/extension/form/extension-date-picker.hpp
 
 	include/extend/extension-detail-view.hpp
 
@@ -384,7 +384,7 @@ set(SRCS
 	src/settings/extension-settings.hpp
 	src/settings/command-metadata-settings-detail.cpp
 	src/settings/extension-settings-detail.cpp
-	src/settings/app-settings-detail.cpp
+	src/settings/provider-settings-detail.cpp
 	src/settings/keybind-settings.cpp
 
 	src/ui/omni-tree/omni-tree.hpp
@@ -406,6 +406,9 @@ set(SRCS
 	src/extensions/calculator/history/calculator-history-view.cpp
 	src/extensions/theme/manage/manage-themes-view.hpp
 	src/extensions/theme/manage/manage-themes-view.cpp
+	
+	src/extensions/clipboard/clipboard-extension.hpp
+	src/extensions/clipboard/clipboard-extension.cpp
 
 	src/extensions/raycast/store/store-detail-view.cpp
 	src/extensions/raycast/store/store-listing-view.cpp
@@ -441,6 +444,8 @@ set(SRCS
 	src/services/file-chooser/abstract-file-chooser.hpp
 	src/services/file-chooser/xdp-file-chooser/xdp-file-chooser.hpp
 	src/services/file-chooser/xdp-file-chooser/xdp-file-chooser.cpp
+	src/services/file-chooser/native/native-file-chooser.hpp
+	src/services/file-chooser/native/native-file-chooser.cpp
 	src/services/root-item-manager/root-item-manager.hpp
 	src/services/root-item-manager/root-item-manager.cpp
 	
@@ -518,6 +523,7 @@ set(SRCS
 	src/extension/requests/file-search-request-router.cpp
 	src/extension/requests/app-request-router.cpp
 	src/extension/requests/clipboard-request-router.cpp
+	src/extension/requests/command-request-router.cpp
 	src/extension/requests/wm-router.cpp
 	src/extension/extension-command-runtime.cpp
 
@@ -525,8 +531,15 @@ set(SRCS
 	src/extensions/raycast/store/store-detail-view.hpp
 
 	src/extensions/vicinae/vicinae-extension.cpp
+	src/extensions/vicinae/store/store-listing-view.hpp
+	src/extensions/vicinae/store/store-listing-view.cpp
+	src/extensions/vicinae/store/store-detail-view.hpp
+	src/extensions/vicinae/store/store-detail-view.cpp
+	src/extensions/vicinae/list-installed-extensions-view.hpp
+	src/extensions/vicinae/list-installed-extensions-view.cpp
 
 	src/services/raycast/raycast-store.cpp
+	src/services/extension-store/vicinae-store.cpp
 
 	src/ui/thumbnail/thumbnail.hpp
 	src/ui/thumbnail/thumbnail.cpp
@@ -623,6 +636,8 @@ if (LIBQALCULATE_BACKEND)
 	)
 endif()
 
+
+
 if (TYPESCRIPT_EXTENSIONS)
 	list(APPEND SRCS ${CMAKE_CURRENT_BINARY_DIR}/resources.qrc)
 endif()
@@ -644,12 +659,59 @@ if (UNIX AND NOT APPLE)
 		src/services/window-manager/gnome/gnome-workspace.cpp
 		src/services/window-manager/gnome/gnome-listener.cpp
 		src/services/window-manager/wayland/wayland.cpp
+		src/services/window-manager/x11/x11-window-manager.cpp
+		src/services/window-manager/x11/x11-event-listener.cpp
+		src/services/window-manager/x11/x11-window.cpp
 
-		# Hyprland
-		# End Hyprland
+		src/lib/wayland/virtual-keyboard.hpp
+		src/lib/wayland/virtual-keyboard.cpp
 	)
+
+	# Add XCB (X11 C Bindings) library for X11 window manager support
+	find_package(X11 REQUIRED)
+	if (X11_FOUND)
+		list(APPEND LIBS X11::xcb)
+		message(STATUS "XCB library found for X11 window manager support")
+	endif()
+
     include("Wayland")
+
     wayland_generate_protocol("${CMAKE_CURRENT_SOURCE_DIR}/protocols/wlr-foreign-toplevel-management-unstable-v1.xml")
+	wayland_generate_protocol("${CMAKE_CURRENT_SOURCE_DIR}/protocols/virtual-keyboard-unstable-v1.xml")
+		wayland_generate_protocol("${CMAKE_CURRENT_SOURCE_DIR}/protocols/ext-data-control-v1.xml")
+
+	list(APPEND LIBS xkbcommon)
+
+	# Common Wayland support files
+	list(APPEND SRCS
+		src/lib/wayland/globals.cpp
+		src/lib/wayland/display.cpp
+		src/lib/wayland/registry.cpp
+		src/lib/wayland/seat.cpp
+		src/lib/wayland/virtual-keyboard.hpp
+		src/lib/wayland/virtual-keyboard.cpp
+	)
+
+	# ext-data-control
+	list(APPEND SRCS
+		src/ext-clip/app.cpp
+		src/ext-clip/data-control-client.cpp
+		src/ext-clip/data-device.cpp
+		src/ext-clip/data-offer.cpp
+		src/services/clipboard/ext/ext-clipboard-server.hpp
+		src/services/clipboard/ext/ext-clipboard-server.cpp
+	)
+
+	# wlr-data-control
+	list(APPEND SRCS
+		src/wlr-clip/app.cpp
+		src/wlr-clip/data-control-client.cpp
+		src/wlr-clip/data-device.cpp
+		src/wlr-clip/data-offer.cpp
+		src/services/clipboard/wlr/wlr-clipboard-server.hpp
+		src/services/clipboard/wlr/wlr-clipboard-server.cpp
+	)
+	wayland_generate_protocol("${CMAKE_CURRENT_SOURCE_DIR}/protocols/wlr-data-control-unstable-v1.xml")
 endif()
 	
 

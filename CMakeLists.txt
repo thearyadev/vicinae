@@ -19,10 +19,10 @@ option(IGNORE_CCACHE "Always ignore ccache even if it is installed" OFF)
 option(LTO "Enable Link Time Optimization (LTO). This will result in better performance, but greatly increased compile time. (Gentoo chads can't live without this)" OFF)
 option(NOSTRIP "Never strip debug symbols from the binary, even in release mode. Note that symbols are never stripped for debug releases." OFF)
 option(
-	INSTALL_NODE_MODULES 
-	"Install required node_modules dependencies as part of the build process. 
+	INSTALL_NODE_MODULES
+	"Install required node_modules dependencies as part of the build process.
 	You can turn this off if you have another way to install the node_modules,
-	but they are still required build the project." 
+	but they are still required build the project."
 	ON
 )
 
@@ -48,9 +48,11 @@ endif()
 
 if (APPLE)
 	set(WAYLAND_LAYER_SHELL OFF)
+	set(WLR_DATA_CONTROL OFF)
 endif()
 
 if (UNIX AND NOT APPLE)
+	set(XDGPP_INSTALL OFF CACHE BOOL "Don't install xdgpp when building vicinae" FORCE)
 	add_subdirectory("./lib/xdgpp")
 endif()
 
@@ -96,11 +98,15 @@ message(STATUS "Vicinae commit hash: ${VICINAE_GIT_COMMIT_HASH}")
 
 get_cxx_compiler_name(CXX_COMPILER_NAME)
 
-add_compile_definitions(VICINAE_GIT_TAG="${VICINAE_GIT_TAG}")
-add_compile_definitions(VICINAE_GIT_COMMIT_HASH="${VICINAE_GIT_COMMIT_HASH}")
-add_compile_definitions(VICINAE_PROVENANCE="${VICINAE_PROVENANCE}")
+# Generate version header from template
+configure_file(
+	"${CMAKE_SOURCE_DIR}/cmake/version.h.in"
+	"${CMAKE_BINARY_DIR}/generated/version.h"
+	@ONLY
+)
 
 set(CMARK_LIBRARY "cmark-gfm")
+set(CMARK_EXT_LIBRARY "cmark-gfm-extensions")
 
 if (NOT USE_SYSTEM_RAPIDFUZZ)
 	include(RapidFuzz)
@@ -128,7 +134,8 @@ endif()
 if (NOT USE_SYSTEM_CMARK_GFM)
 	include(CMark)
 	checkout_cmark()
-	set(CMARK_LIBRARY "libcmark-gfm_static")
+  set(CMARK_LIBRARY "libcmark-gfm_static")
+  set(CMARK_EXT_LIBRARY "libcmark-gfm-extensions_static")
 endif()
 
 if (NOT USE_SYSTEM_ABSEIL)
@@ -188,7 +195,7 @@ if (LTO)
 	add_link_options(-flto=auto)
 endif()
 
-if (CCACHE AND NOT IGNORE_CCACHE) 
+if (CCACHE AND NOT IGNORE_CCACHE)
 	message(STATUS "ccache is installed, changing CMAKE_CXX_COMPILER_LAUNCHER")
 	set(CMAKE_CXX_COMPILER_LAUNCHER "ccache")
 endif()
@@ -211,12 +218,7 @@ else()
 endif()
 
 add_compile_definitions(BUILD_INFO="${BUILD_INFO}")
-
 add_subdirectory(vicinae)
-
-if (UNIX AND NOT APPLE)
-	add_subdirectory(wlr-clip)
-endif()
 
 set(INSTALL_SHARE ${CMAKE_INSTALL_PREFIX}/share)
 set(VICINAE_INSTALL_SHARE ${INSTALL_SHARE}/vicinae)
@@ -227,10 +229,18 @@ file(REMOVE_RECURSE ${VICINAE_THEME_DIR})
 install(DIRECTORY ./extra/themes DESTINATION ${VICINAE_INSTALL_SHARE})
 
 if (UNIX AND NOT APPLE)
-	# install desktop file
 	set(APP_DIR ${INSTALL_SHARE}/applications)
 	make_directory(${APP_DIR})
 	install(FILES ./extra/vicinae.desktop DESTINATION ${APP_DIR})
+	install(FILES ./extra/vicinae-url-handler.desktop DESTINATION ${APP_DIR})
+
+	set(ICON_DIR ${INSTALL_SHARE}/icons/hicolor/512x512/apps)
+	make_directory(${ICON_DIR})
+	install(FILES ./extra/vicinae.png DESTINATION ${ICON_DIR})
+
+	set(SYSTEMD_USER_DIR ${CMAKE_INSTALL_PREFIX}/lib/systemd/user)
+	make_directory(${SYSTEMD_USER_DIR})
+	install(FILES ./extra/vicinae.service DESTINATION ${SYSTEMD_USER_DIR})
 endif()
 
 

@@ -2,6 +2,7 @@
 #include <ranges>
 #include "hyprland/hyprland.hpp"
 #include "gnome/gnome-window-manager.hpp"
+#include "x11/x11-window-manager.hpp"
 #include "dummy-window-manager.hpp"
 #include "wayland/wayland.hpp"
 #include "services/window-manager/abstract-window-manager.hpp"
@@ -12,6 +13,9 @@ std::vector<std::unique_ptr<AbstractWindowManager>> WindowManager::createCandida
 
   candidates.emplace_back(std::make_unique<HyprlandWindowManager>());
   candidates.emplace_back(std::make_unique<GnomeWindowManager>());
+  candidates.emplace_back(std::make_unique<X11WindowManager>());
+
+  // this implementation is good enough for most standalone wayland compositors
   candidates.emplace_back(std::make_unique<WaylandWindowManager>());
 
   return candidates;
@@ -74,11 +78,14 @@ AbstractWindowManager::WindowList WindowManager::findAppWindows(const AbstractAp
 
 void WindowManager::updateWindowCache() { m_windows = m_provider->listWindowsSync(); }
 
-bool WindowManager::canPaste() const { return m_provider->supportsInputForwarding(); }
+bool WindowManager::canPaste() const { return m_provider->supportsPaste(); }
 
 WindowManager::WindowManager() {
   m_provider = createProvider();
   updateWindowCache();
 
-  connect(m_provider.get(), &AbstractWindowManager::windowsChanged, this, &WindowManager::updateWindowCache);
+  connect(m_provider.get(), &AbstractWindowManager::windowsChanged, this, [this]() {
+    updateWindowCache();
+    emit windowsChanged();
+  });
 }

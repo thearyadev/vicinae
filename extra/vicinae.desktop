@@ -2,10 +2,19 @@
 Type=Application
 Name=Vicinae
 GenericName=Vicinae
-Comment=Support for vicinae:// url scheme
-Exec=vicinae %u
+Comment=A focused launcher for your desktop
+Exec=/bin/sh -c "vicinae server --no-replace || vicinae open"
 Terminal=false
 Icon=vicinae
-Categories=System;Utility;
-NoDisplay=true
-MimeType=x-scheme-handler/vicinae;x-scheme-handler/raycast;
+Categories=Utility;Accessibility;
+NoDisplay=false
+Actions=restart;close
+StartupWMClass=vicinae
+
+[Desktop Action restart]
+Name=Restart Vicinae Server
+Exec=vicinae server --replace
+
+[Desktop Action close]
+Name=Close Vicinae Window
+Exec=vicinae close

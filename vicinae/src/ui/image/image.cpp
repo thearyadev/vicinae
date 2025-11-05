@@ -9,26 +9,77 @@
 #include "ui/image/local-image-loader.hpp"
 #include "ui/image/emoji-image-loader.hpp"
 #include "ui/image/qicon-image-loader.hpp"
+#include "ui/image/url.hpp"
+#include <qlogging.h>
+#include <qnamespace.h>
 #include <qpainterpath.h>
+#include <qpixmapcache.h>
 
-void ImageWidget::handleDataUpdated(const QPixmap &data) {
-  m_data = data;
-  update();
+QString ImageWidget::sizedCacheKey(const QString &key, const QSize &size) const {
+  return QString("%1%2%3").arg(size.width()).arg(size.height()).arg(m_source.cacheKey());
+}
+
+void ImageWidget::handleDataUpdated(const QPixmap &data, bool cachable) {
+  if (cachable && m_source.cachable()) {
+    QPixmap cached;
+    bool isBigger = true;
+    if (QPixmapCache::find(m_source.cacheKey(), &cached); !cached.isNull()) {
+      isBigger = data.width() * data.height() > cached.width() * cached.height();
+    }
+    if (isBigger) { QPixmapCache::insert(m_source.cacheKey(), data); }
+  }
+  setData(data);
 }
 
 void ImageWidget::render() {
-  if (size().isNull() || size().isEmpty() || !size().isValid()) return;
-
+  if (size().isNull() || size().isEmpty() || !size().isValid()) { return; }
   if (!m_loader) { return; }
-
   QSize drawableSize = rect().marginsRemoved(contentsMargins()).size();
   qreal pixelRatio = 1;
 
   if (auto sc = screen()) { pixelRatio = sc->devicePixelRatio(); }
 
-  m_renderCount += 1;
+  ++m_renderCount;
+
+  if (m_source.cachable()) {
+    QPixmap cached;
+
+    if (QPixmapCache::find(m_source.cacheKey(), &cached);
+        !cached.isNull() && cached.devicePixelRatio() == pixelRatio) {
+      auto scaledDrawableSize = drawableSize * cached.devicePixelRatio();
+
+      if (scaledDrawableSize == cached.size()) {
+        setData(cached);
+        return;
+      }
+
+      auto sizedKey = sizedCacheKey(m_source.cacheKey(), scaledDrawableSize);
+
+      if (QPixmapCache::find(sizedKey, &cached)) {
+        setData(cached);
+        return;
+      }
+
+      bool downScalable =
+          scaledDrawableSize.width() * scaledDrawableSize.height() <= cached.width() * cached.height();
+
+      if (downScalable) {
+        QPixmap scaled =
+            cached.scaled(scaledDrawableSize, ImageURL::fitToAspectRatio(m_fit), Qt::SmoothTransformation);
+        QPixmapCache::insert(sizedKey, scaled);
+        setData(scaled);
+        return;
+      }
+    }
+  }
+
   m_loader->render(RenderConfig{
       .size = drawableSize, .fit = m_fit, .devicePixelRatio = pixelRatio, .fill = m_source.fillColor()});
+}
+
+void ImageWidget::setData(const QPixmap &pixmap) {
+  m_data = pixmap;
+  update();
 }
 
 void ImageWidget::setAlignment(Qt::Alignment alignment) {
@@ -65,9 +116,10 @@ void ImageWidget::setUrlImpl(const ImageURL &url) {
   auto &theme = ThemeService::instance().theme();
   auto type = url.type();
 
+  m_token++; // to make sure we don't update from a previous loader
+  m_loader.reset();
   m_source = url;
   m_data = {};
-  m_loader.reset();
 
   if (type == ImageURLType::Favicon) {
     m_loader.reset(new FaviconImageLoader(url.name()));
@@ -111,10 +163,9 @@ void ImageWidget::setUrlImpl(const ImageURL &url) {
     m_loader.reset(new LocalImageLoader(path));
   }
 
-  else if (type == ImageURLType::Http) {
-    QUrl httpUrl("https://" + url.name());
-
-    m_loader.reset(new HttpImageLoader(httpUrl));
+  if (type == ImageURLType::Http) {
+    // QUrl httpUrl("http://" + url.name());
+    m_loader.reset(new HttpImageLoader(url.name()));
   }
 
   else if (type == ImageURLType::Emoji) {
@@ -124,9 +175,12 @@ void ImageWidget::setUrlImpl(const ImageURL &url) {
   if (!m_loader) { return handleLoadingError("No loader"); }
 
   if (m_loader) {
-    connect(m_loader.get(), &AbstractImageLoader::dataUpdated, this, &ImageWidget::handleDataUpdated);
+    connect(m_loader.get(), &AbstractImageLoader::dataUpdated, this,
+            [this, token = m_token](const QPixmap &pixmap, bool cachable) {
+              if (token == m_token) { handleDataUpdated(pixmap, cachable); }
+            });
     connect(m_loader.get(), &AbstractImageLoader::errorOccured, this, &ImageWidget::handleLoadingError);
-    if (m_renderCount > 0) render();
+    if (m_renderCount > 0) { render(); }
   }
 }
 
@@ -152,7 +206,7 @@ void ImageWidget::showEvent(QShowEvent *event) {
 }
 
 void ImageWidget::paintEvent(QPaintEvent *event) {
-  if (m_data.isNull()) return;
+  if (m_data.isNull()) { return; }
 
   auto logicalDataSize = m_data.size() / m_data.devicePixelRatio();
   int horizontalMargins = width() - logicalDataSize.width();
@@ -165,8 +219,6 @@ void ImageWidget::paintEvent(QPaintEvent *event) {
   if (m_alignment.testFlag(Qt::AlignVCenter)) { pos.setY(verticalMargins / 2); }
 
   OmniPainter painter(this);
-
-  // painter.fillRect(rect(), ColorLike(SemanticColor::Red), 0, 1);
 
   painter.setClipRegion(event->region());
   painter.setRenderHint(QPainter::SmoothPixmapTransform, true);

@@ -3,7 +3,10 @@
 #include <filesystem>
 #include <numeric>
 #include <qapplication.h>
+#include "environment.hpp"
+#include "services/app-service/abstract-app-db.hpp"
 #include "x11/x11-clipboard-server.hpp"
+#include <qclipboard.h>
 #include <qimagereader.h>
 #include <qlogging.h>
 #include <qmimedata.h>
@@ -23,6 +26,7 @@
 #include "services/clipboard/clipboard-server.hpp"
 #include "services/clipboard/gnome/gnome-clipboard-server.hpp"
 #include "utils.hpp"
+#include "ext/ext-clipboard-server.hpp"
 #include "wlr/wlr-clipboard-server.hpp"
 #include "services/window-manager/abstract-window-manager.hpp"
 #include "services/window-manager/window-manager.hpp"
@@ -34,6 +38,9 @@ namespace fs = std::filesystem;
  */
 static const std::set<QString> IGNORED_MIME_TYPES = {
     Clipboard::CONCEALED_MIME_TYPE,
+};
+
+static const std::set<QString> PASSWORD_MIME_TYPES = {
     "x-kde-passwordManagerHint",
 };
 
@@ -47,7 +54,6 @@ bool ClipboardService::setPinned(const QString id, bool pinned) {
 
 bool ClipboardService::clear() {
   QApplication::clipboard()->clear();
-
   return true;
 }
 
@@ -84,21 +90,17 @@ bool ClipboardService::copyContent(const Clipboard::Content &content, const Clip
 bool ClipboardService::pasteContent(const Clipboard::Content &content, const Clipboard::CopyOptions options) {
   if (!copyContent(content, options)) return false;
 
-  if (!m_wm.provider()->supportsInputForwarding()) {
-    qWarning()
-        << "pasteContent called but no window manager capable of input forwarding is running. Falling i"
-           "back to regular clipboard copy";
+  if (!m_wm.provider()->supportsPaste()) {
+    qWarning() << "pasteContent called but the current window manager cannot paste, ignoring...";
     return false;
   }
 
-  auto window = m_wm.getFocusedWindow();
-  Keyboard::Shortcut shortcut = Keyboard::Shortcut::osPaste();
-
-  if (auto app = m_appDb.find(window->wmClass())) {
-    if (app->isTerminalEmulator()) { shortcut = shortcut.shifted(); }
-  }
-
-  m_wm.provider()->sendShortcutSync(*window, shortcut);
+  QTimer::singleShot(Environment::pasteDelay(), [wm = &m_wm, appDb = &m_appDb]() {
+    auto window = wm->getFocusedWindow();
+    std::shared_ptr<AbstractApplication> app;
+    if (window) { app = appDb->find(window->wmClass()); }
+    wm->provider()->pasteToWindow(window.get(), app.get());
+  });
 
   return true;
 }
@@ -126,6 +128,8 @@ void ClipboardService::setEncryption(bool value) {
 }
 
 bool ClipboardService::isEncryptionReady() const { return m_encrypter.get(); }
+
+void ClipboardService::setIgnorePasswords(bool value) { m_ignorePasswords = value; }
 
 void ClipboardService::setMonitoring(bool value) {
   if (m_monitoring == value) return;
@@ -163,22 +167,19 @@ bool ClipboardService::copyHtml(const Clipboard::Html &data, const Clipboard::Co
 }
 
 bool ClipboardService::copyText(const QString &text, const Clipboard::CopyOptions &options) {
-  QClipboard *clipboard = QApplication::clipboard();
   auto mimeData = new QMimeData;
 
   mimeData->setData("text/plain", text.toUtf8());
 
   if (options.concealed) mimeData->setData(Clipboard::CONCEALED_MIME_TYPE, "1");
 
-  clipboard->setMimeData(mimeData);
-
-  return true;
+  return copyQMimeData(mimeData, options);
 }
 
 QFuture<PaginatedResponse<ClipboardHistoryEntry>>
 ClipboardService::listAll(int limit, int offset, const ClipboardListSettings &opts) const {
   return QtConcurrent::run(
-      [opts, limit, offset]() { return ClipboardDatabase().listAll(limit, offset, opts); });
+      [opts, limit, offset]() { return ClipboardDatabase().query(limit, offset, opts); });
 }
 
 ClipboardOfferKind ClipboardService::getKind(const ClipboardDataOffer &offer) {
@@ -333,6 +334,11 @@ bool ClipboardService::isConcealedSelection(const ClipboardSelection &selection)
                              [](auto &&offer) { return IGNORED_MIME_TYPES.contains(offer.mimeType); });
 }
 
+bool ClipboardService::isPasswordSelection(const ClipboardSelection &selection) {
+  return std::ranges::any_of(selection.offers,
+                             [](auto &&offer) { return PASSWORD_MIME_TYPES.contains(offer.mimeType); });
+}
+
 ClipboardSelection &ClipboardService::sanitizeSelection(ClipboardSelection &selection) {
   std::ranges::sort(selection.offers, [](auto &&a, auto &&b) {
     return std::ranges::lexicographical_compare(a.mimeType, b.mimeType);
@@ -349,6 +355,11 @@ void ClipboardService::saveSelection(ClipboardSelection selection) {
 
   if (isConcealedSelection(selection)) {
     qDebug() << "Ignoring concealed selection";
+    return;
+  }
+
+  if (m_ignorePasswords && isPasswordSelection(selection)) {
+    qInfo() << "Ignored password clipboard selection";
     return;
   }
 
@@ -371,7 +382,7 @@ void ClipboardService::saveSelection(ClipboardSelection selection) {
   auto preferredKind = getKind(*preferredOfferIt);
 
   if (preferredKind == ClipboardOfferKind::Unknown) {
-    qDebug() << "Ignoring selection with primary offer of unknown kind" << preferredMimeType;
+    qWarning() << "Ignoring selection with primary offer of unknown kind" << preferredMimeType;
     return;
   }
 
@@ -495,13 +506,9 @@ std::optional<ClipboardSelection> ClipboardService::retrieveSelectionById(const 
 }
 
 bool ClipboardService::copyQMimeData(QMimeData *data, const Clipboard::CopyOptions &options) {
-  QClipboard *clipboard = QApplication::clipboard();
-
   if (options.concealed) { data->setData(Clipboard::CONCEALED_MIME_TYPE, "1"); }
 
-  clipboard->setMimeData(data);
-
-  return true;
+  return m_clipboardServer->setClipboardContent(data);
 }
 
 bool ClipboardService::copySelection(const ClipboardSelection &selection,
@@ -585,11 +592,13 @@ AbstractClipboardServer *ClipboardService::clipboardServer() const { return m_cl
 ClipboardService::ClipboardService(const std::filesystem::path &path, WindowManager &wm, AppService &appDb)
     : m_wm(wm), m_appDb(appDb) {
   m_dataDir = path.parent_path() / "clipboard-data";
+  auto clip = QApplication::clipboard();
 
   {
     ClipboardServerFactory factory;
 
     factory.registerServer<GnomeClipboardServer>();
+    factory.registerServer<ExtDataControlClipboardServer>();
     factory.registerServer<WlrClipboardServer>();
     factory.registerServer<X11ClipboardServer>();
     m_clipboardServer = factory.createFirstActivatable();

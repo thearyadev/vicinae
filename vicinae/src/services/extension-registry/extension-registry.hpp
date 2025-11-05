@@ -7,6 +7,7 @@
 #include <qfilesystemwatcher.h>
 #include <qjsonobject.h>
 #include <qobject.h>
+#include <qtimer.h>
 #include <qtmetamacros.h>
 #include <vector>
 #include <QString>
@@ -18,7 +19,7 @@ struct ManifestError {
 };
 
 struct ExtensionManifest {
-  enum class Provenance { Vicinae, Raycast };
+  enum class Provenance { Local, Vicinae, Raycast };
 
   struct Command {
     QString name;
@@ -43,22 +44,27 @@ struct ExtensionManifest {
   std::vector<QString> categories;
   std::vector<Preference> preferences;
   std::vector<Command> commands;
+  bool needsRaycastApi = false;
   Provenance provenance;
+
+  bool isFromRaycastStore() const { return provenance == ExtensionManifest::Provenance::Raycast; }
+  bool isFromVicinaeStore() const { return provenance == ExtensionManifest::Provenance::Vicinae; }
+  bool isLocal() const { return provenance == ExtensionManifest::Provenance::Local; }
 };
 
 class ExtensionRegistry : public QObject {
   Q_OBJECT
 
-  LocalStorageService &m_storage;
-  QFileSystemWatcher *m_watcher = new QFileSystemWatcher(this);
+signals:
+  void extensionAdded(const QString &id);
+  void extensionUninstalled(const QString &id);
 
-  CommandArgument parseArgumentFromObject(const QJsonObject &obj);
-  Preference parsePreferenceFromObject(const QJsonObject &obj);
-  ExtensionManifest::Command parseCommandFromObject(const QJsonObject &obj);
-
-  std::filesystem::path extensionDir() const;
+  // used to notify subscribers that they should rescan
+  void extensionsChanged() const;
 
 public:
+  ExtensionRegistry(LocalStorageService &storage);
+
   /**
    * Unzip and install extension from a background thread.
    * The `extensionAdded` and `extensionsChanged` signals are emitted
@@ -74,14 +80,14 @@ public:
   bool isInstalled(const QString &id) const;
   bool uninstall(const QString &id);
 
-  ExtensionRegistry(LocalStorageService &storage);
-
   void requestScan() { emit extensionsChanged(); }
 
-signals:
-  void extensionAdded(const QString &id);
-  void extensionUninstalled(const QString &id);
+  CommandArgument parseArgumentFromObject(const QJsonObject &obj);
+  Preference parsePreferenceFromObject(const QJsonObject &obj);
+  ExtensionManifest::Command parseCommandFromObject(const QJsonObject &obj);
+  std::filesystem::path extensionDir() const;
 
-  // used to notify subscribers that they should rescan
-  void extensionsChanged() const;
+  QTimer m_rescanDebounce;
+  LocalStorageService &m_storage;
+  QFileSystemWatcher *m_watcher = new QFileSystemWatcher(this);
 };

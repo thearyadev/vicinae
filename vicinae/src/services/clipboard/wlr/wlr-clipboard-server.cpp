@@ -2,7 +2,6 @@
 #include "pid-file/pid-file.hpp"
 #include "proto/wlr-clipboard.pb.h"
 #include "services/clipboard/clipboard-server.hpp"
-#include "utils/environment.hpp"
 #include <QtCore>
 #include <QApplication>
 #include <netinet/in.h>
@@ -11,12 +10,11 @@
 #include <qdebug.h>
 #include <qresource.h>
 #include <qstringview.h>
+#include "lib/wayland/globals.hpp"
 
 bool WlrClipboardServer::isAlive() const { return m_process.isOpen(); }
 
-bool WlrClipboardServer::isActivatable() const {
-  return Environment::isWaylandSession() && !Environment::isGnomeEnvironment();
-}
+bool WlrClipboardServer::isActivatable() const { return Wayland::Globals::wlrDataControlManager(); }
 
 void WlrClipboardServer::handleMessage(const proto::ext::wlrclip::Selection &sel) {
   ClipboardSelection cs;
@@ -30,7 +28,11 @@ void WlrClipboardServer::handleMessage(const proto::ext::wlrclip::Selection &sel
   emit selectionAdded(cs);
 }
 
-void WlrClipboardServer::handleExit(int code, QProcess::ExitStatus status) {}
+void WlrClipboardServer::handleExit(int code, QProcess::ExitStatus status) {
+  if (status == QProcess::ExitStatus::CrashExit) {
+    qCritical() << "wlr-clipboard process exited with status code" << status;
+  }
+}
 
 QString WlrClipboardServer::id() const { return "wlr-clipboard"; }
 
@@ -42,15 +44,16 @@ bool WlrClipboardServer::stop() {
 }
 
 bool WlrClipboardServer::start() {
-  PidFile pidFile("wlr-clip");
+  PidFile pidFile(ENTRYPOINT);
   int maxWaitForStart = 5000;
+  std::error_code ec;
 
   if (pidFile.exists() && pidFile.kill()) { qInfo() << "Killed existing wlr-clip instance"; }
 
-  m_process.start(WLR_CLIP_BIN, {});
+  m_process.start("/proc/self/exe", {ENTRYPOINT});
 
   if (!m_process.waitForStarted(maxWaitForStart)) {
-    qCritical() << "Failed to start:" << WLR_CLIP_BIN << m_process.errorString();
+    qCritical() << "Failed to start wlr-clipboard process" << m_process.errorString();
     return false;
   }
 

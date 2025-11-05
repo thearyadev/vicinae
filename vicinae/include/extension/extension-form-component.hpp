@@ -4,19 +4,27 @@
 #include <qjsonvalue.h>
 #include <qnamespace.h>
 #include <qscrollarea.h>
+#include <qlabel.h>
 #include <qtmetamacros.h>
+#include <qurl.h>
 #include <qwidget.h>
 #include "extension/form/extension-form-input.hpp"
 #include "extension/form/extension-form-input.hpp"
 #include "extension/form/extension-dropdown.hpp"
 #include "extension/form/extension-password-field.hpp"
+#include "extension/form/extension-date-picker.hpp"
+#include "extension/form/extension-file-picker-field.hpp"
 #include "ui/vertical-scroll-area/vertical-scroll-area.hpp"
 #include "extend/form-model.hpp"
 #include "extension/extension-view.hpp"
 #include "extension/form/extension-checkbox-field.hpp"
 #include "extension/form/extension-text-field.hpp"
+#include "extension/form/extension-text-area.hpp"
 #include "ui/form/form-field.hpp"
 #include "ui/scroll-bar/scroll-bar.hpp"
+#include "service-registry.hpp"
+#include "services/app-service/app-service.hpp"
+#include "common.hpp"
 
 class ExtensionFormField : public FormField {
   Q_OBJECT
@@ -28,8 +36,13 @@ class ExtensionFormField : public FormField {
     // XXX awful, we will fix this very soon
     if (auto f = dynamic_cast<const FormModel::CheckboxField *>(field)) { return new ExtensionCheckboxField; }
     if (auto f = dynamic_cast<const FormModel::TextField *>(field)) { return new ExtensionTextField; }
+    if (auto f = dynamic_cast<const FormModel::TextAreaField *>(field)) { return new ExtensionTextArea; }
     if (auto f = dynamic_cast<const FormModel::DropdownField *>(field)) { return new ExtensionDropdown; }
     if (auto f = dynamic_cast<const FormModel::PasswordField *>(field)) { return new ExtensionPasswordField; }
+    if (auto f = dynamic_cast<const FormModel::DatePickerField *>(field)) { return new ExtensionDatePicker; }
+    if (auto f = dynamic_cast<const FormModel::FilePickerField *>(field)) {
+      return new ExtensionFilePickerField;
+    }
 
     return nullptr;
   }
@@ -54,7 +67,7 @@ public:
       m_widget = createFieldWidget(model.get());
 
       connect(m_widget->m_extensionNotifier, &ExtensionEventNotifier::eventNotified, this,
-              &ExtensionFormField::notifyEvent);
+              &ExtensionFormField::notifyEvent, Qt::QueuedConnection);
 
       if (auto old = widget()) old->deleteLater();
 
@@ -71,16 +84,84 @@ public:
   }
 
   void handleFocusChanged(bool value) {
-    if (!value && m_model->onBlur) { emit notifyEvent(*m_model->onBlur, {}); }
-    if (value && m_model->onFocus) { emit notifyEvent(*m_model->onFocus, {}); }
+    if (!value && m_model->onBlur) {
+      QMetaObject::invokeMethod(
+          this, [this]() { emit notifyEvent(*m_model->onBlur, {}); }, Qt::QueuedConnection);
+    }
+    if (value && m_model->onFocus) {
+      QMetaObject::invokeMethod(
+          this, [this]() { emit notifyEvent(*m_model->onFocus, {}); }, Qt::QueuedConnection);
+    }
   }
 
   ExtensionFormField() {
-    connect(this, &ExtensionFormField::focusChanged, this, &ExtensionFormField::handleFocusChanged);
+    connect(this, &ExtensionFormField::focusChanged, this, &ExtensionFormField::handleFocusChanged,
+            Qt::QueuedConnection);
   }
 
 signals:
   void notifyEvent(const QString &handler, const QJsonArray &args) const;
+};
+
+class FormDescriptionWidget : public JsonFormItemWidget {
+  QVBoxLayout *m_layout = new QVBoxLayout(this);
+
+public:
+  FormDescriptionWidget(const std::optional<QString> &title, const QString &text) {
+    m_layout->setContentsMargins(0, 0, 0, 0);
+    m_layout->setSpacing(2);
+
+    if (title) {
+      auto titleLabel = new QLabel(*title);
+      titleLabel->setTextFormat(Qt::PlainText);
+      titleLabel->setWordWrap(true);
+      QFont f = titleLabel->font();
+      f.setBold(true);
+      titleLabel->setFont(f);
+      m_layout->addWidget(titleLabel);
+    }
+
+    auto body = new QLabel(text);
+    body->setTextFormat(Qt::PlainText);
+    body->setWordWrap(true);
+    m_layout->addWidget(body);
+  }
+
+  QJsonValue asJsonValue() const override { return QJsonValue(); }
+  void setValueAsJson(const QJsonValue &) override {}
+  FocusNotifier *focusNotifier() const override { return nullptr; }
+};
+
+class FormLinkAccessoryWidget : public QWidget {
+  QWidget *m_inner = new QWidget(this);
+  QLabel *m_text = new QLabel(m_inner);
+  QUrl m_href;
+
+  void mousePressEvent(QMouseEvent *event) override {
+    if (event->button() == Qt::LeftButton && !m_href.isEmpty()) {
+      ServiceRegistry::instance()->appDb()->openTarget(m_href.toString());
+    }
+    QWidget::mousePressEvent(event);
+  }
+
+public:
+  FormLinkAccessoryWidget() {
+    // Inner layout that holds the text and sizes to content
+    auto innerLayout = new QHBoxLayout(m_inner);
+    innerLayout->setContentsMargins(10, 0, 10, 0);
+    innerLayout->addWidget(m_text);
+    m_inner->setLayout(innerLayout);
+    m_inner->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+
+    // Outer layout that aligns inner widget to right
+    auto outerLayout = new QHBoxLayout(this);
+    outerLayout->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    outerLayout->setContentsMargins(0, 0, 0, 0);
+    outerLayout->addWidget(m_inner);
+  }
+
+  void setText(const QString &text) { m_text->setText(text); }
+  void setHref(const QUrl &href) { m_href = href; }
 };
 
 class ExtensionFormComponent : public ExtensionSimpleView {
@@ -89,8 +170,18 @@ class ExtensionFormComponent : public ExtensionSimpleView {
   std::vector<ExtensionFormField *> m_fields;
   QVBoxLayout *m_layout = new QVBoxLayout;
   bool autoFocused = false;
+  FormLinkAccessoryWidget *m_linkAccessory = new FormLinkAccessoryWidget;
 
   bool supportsSearch() const override { return false; }
+  QWidget *searchBarAccessory() const override { return m_linkAccessory; }
+
+private:
+  QWidget *createDescriptionField(const FormModel::Description &d) const {
+    auto field = new FormField;
+    field->setName("");
+    field->setWidget(new FormDescriptionWidget(d.title, d.text));
+    return field;
+  }
 
 public:
   tl::expected<QJsonObject, QString> submit() override {
@@ -102,7 +193,7 @@ public:
       payload[field->id()] = field->valueAsJson();
     }
 
-    reset();
+    // reset();
     return payload;
   }
 
@@ -114,6 +205,16 @@ public:
 
   void render(const RenderModel &model) override {
     auto formModel = std::get<FormModel>(model);
+
+    // Link Accessory
+    if (auto accessory = formModel.searchBarAccessory) {
+      if (auto link = std::get_if<FormModel::LinkAccessoryModel>(&*accessory)) {
+        m_linkAccessory->setText(link->text);
+        m_linkAccessory->setHref(QUrl(link->target));
+      }
+    }
+    setSearchAccessoryVisiblity(formModel.searchBarAccessory.has_value() && isVisible());
+
     size_t i = 0;
 
     if (auto pannel = formModel.actions) { setActionPanel(*pannel); }
@@ -125,6 +226,7 @@ public:
     QWidget *lastAutoFocusable = nullptr;
     bool hasFocus = false;
 
+    int addedWidgets = 0;
     for (int i = 0; i != formModel.items.size(); ++i) {
       if (auto f = std::get_if<std::shared_ptr<FormModel::IField>>(&formModel.items.at(i))) {
         auto &field = *f;
@@ -148,6 +250,34 @@ public:
         } else {
           m_layout->addWidget(formField, 0, Qt::AlignTop);
         }
+        ++addedWidgets;
+      } else if (auto d = std::get_if<FormModel::Description>(&formModel.items.at(i))) {
+        auto field = createDescriptionField(*d);
+        if (m_layout->count() > i) {
+          if (auto w = m_layout->itemAt(i)->widget()) w->deleteLater();
+          m_layout->insertWidget(i, field, 0, Qt::AlignTop);
+        } else {
+          m_layout->addWidget(field, 0, Qt::AlignTop);
+        }
+        ++addedWidgets;
+      } else if (std::holds_alternative<FormModel::Separator>(formModel.items.at(i))) {
+        auto sep = new HDivider;
+        if (m_layout->count() > i) {
+          if (auto w = m_layout->itemAt(i)->widget()) w->deleteLater();
+          m_layout->insertWidget(i, sep);
+        } else {
+          m_layout->addWidget(sep);
+        }
+        ++addedWidgets;
+      }
+    }
+
+    // Trim leftover widgets if the new render has fewer items than before
+    while (m_layout->count() > addedWidgets) {
+      auto item = m_layout->takeAt(addedWidgets);
+      if (item) {
+        if (auto w = item->widget()) w->deleteLater();
+        delete item;
       }
     }
 

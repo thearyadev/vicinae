@@ -10,6 +10,7 @@
 #include "ui/alert/alert.hpp"
 #include "ui/views/base-view.hpp"
 #include "utils/environment.hpp"
+#include <chrono>
 #include <qlogging.h>
 #include <qwidget.h>
 #include <QProcessEnvironment>
@@ -41,9 +42,9 @@ void NavigationController::goBack(const GoBackOptions &opts) {
 
 void NavigationController::setSearchText(const QString &text, const BaseView *caller) {
   if (auto state = findViewState(VALUE_OR(caller, topView()))) {
+    if (state->searchText == text) return;
     state->searchText = text;
     state->sender->textChanged(text);
-
     if (state->sender == topView()) { emit searchTextChanged(state->searchText); }
   }
 }
@@ -57,7 +58,7 @@ void NavigationController::setSearchPlaceholderText(const QString &text, const B
 
 void NavigationController::setLoading(bool value, const BaseView *caller) {
   if (auto state = findViewState(VALUE_OR(caller, topView()))) {
-    state->loading = value;
+    state->isLoading = value;
     if (state->sender == topView()) { emit loadingChanged(value); }
   }
 }
@@ -68,6 +69,26 @@ void NavigationController::showHud(const QString &title, const std::optional<Ima
   if (Environment::isHudDisabled()) return;
 
   emit showHudRequested(title, icon);
+}
+
+void NavigationController::applyPopToRoot(const PendingPopToRoot &settings) {
+  auto resolveApplicablePopToRoot = [&]() {
+    if (settings.type == PopToRootType::Default)
+      return m_popToRootOnClose ? PopToRootType::Immediate : PopToRootType::Suspended;
+    return settings.type;
+  };
+
+  PopToRootType popToRootType = resolveApplicablePopToRoot();
+
+  switch (popToRootType) {
+  case PopToRootType::Immediate:
+    popToRoot({.clearSearch = true});
+    break;
+  default:
+    break;
+  }
+
+  if (isRootSearch() && settings.clearSearch) clearSearchText();
 }
 
 void NavigationController::setDialog(DialogContentWidget *widget) { emit confirmAlertRequested(widget); }
@@ -213,6 +234,7 @@ void NavigationController::popCurrentView() {
 }
 
 void NavigationController::popToRoot(const PopToRootOptions &opts) {
+  m_pendingPopToRoot.reset();
   if (!m_frames.empty() && m_frames.back()->viewCount == 0) { m_frames.pop_back(); }
 
   while (m_views.size() > 1) {
@@ -244,6 +266,12 @@ QString NavigationController::searchText(const BaseView *caller) const {
   return QString();
 }
 
+bool NavigationController::isLoading(const BaseView *caller) const {
+  if (auto state = findViewState(VALUE_OR(caller, topView()))) { return state->isLoading; }
+
+  return false;
+}
+
 void NavigationController::clearActions(const BaseView *caller) {
   setActions(std::make_unique<ActionPanelState>(), caller);
 }
@@ -256,35 +284,24 @@ QString NavigationController::navigationTitle(const BaseView *caller) const {
 
 void NavigationController::setPopToRootOnClose(bool value) { m_popToRootOnClose = value; }
 
+void NavigationController::closeWindow(const CloseWindowOptions &settings, std::chrono::milliseconds delay) {
+  QTimer::singleShot(delay, [this, settings]() { return closeWindow(settings); });
+}
+
 void NavigationController::closeWindow(const CloseWindowOptions &settings) {
   if (!m_windowOpened) return;
 
-  auto resolveApplicablePopToRoot = [&]() {
-    if (settings.popToRootType == PopToRootType::Default)
-      return m_popToRootOnClose ? PopToRootType::Immediate : PopToRootType::Suspended;
-    return settings.popToRootType;
-  };
-
-  PopToRootType popToRootType = resolveApplicablePopToRoot();
+  PopToRootType type = settings.popToRootType;
 
   if (m_instantDismiss) {
     qDebug() << "Consumed instantDismiss flag";
-    popToRootType = PopToRootType::Immediate;
+    type = PopToRootType::Immediate;
     m_instantDismiss = false;
   }
 
+  m_pendingPopToRoot = PendingPopToRoot{.type = type, .clearSearch = settings.clearRootSearch};
   m_windowOpened = false;
   emit windowVisiblityChanged(false);
-
-  switch (popToRootType) {
-  case PopToRootType::Immediate:
-    popToRoot({.clearSearch = true});
-    break;
-  default:
-    break;
-  }
-
-  if (isRootSearch() && settings.clearRootSearch) clearSearchText();
 }
 
 bool NavigationController::windowActivated() { return m_windowActivated; }
@@ -396,50 +413,41 @@ AbstractAction *NavigationController::findBoundAction(const QKeyEvent *event) co
   return nullptr;
 }
 
-void NavigationController::pushView(BaseView *view) {
-  auto state = std::make_unique<ViewState>();
-
-  state->sender = view;
-  state->sender->setContext(&m_ctx);
-  state->sender->setCommandController(m_frames.back()->controller.get());
-  state->supportsSearch = view->supportsSearch();
-  state->needsTopBar = view->needsGlobalTopBar();
-  state->needsStatusBar = view->needsGlobalStatusBar();
-  state->placeholderText = view->initialSearchPlaceholderText();
-  state->navigation.title = view->initialNavigationTitle();
-  state->navigation.icon = view->initialNavigationIcon();
-  state->searchAccessory.reset(view->searchBarAccessory());
-
-  // state->sender->attachCommand(std::make_unique<CommandInterface>(m_ctx.command->activeFrame()));
-
-  if (auto &accessory = state->searchAccessory) {
+void NavigationController::activateView(const ViewState &state) {
+  if (auto &accessory = state.searchAccessory) {
     emit searchAccessoryChanged(accessory.get());
   } else {
     emit searchAccessoryCleared();
   }
 
-  emit headerVisiblityChanged(state->needsTopBar);
-  emit searchVisibilityChanged(state->supportsSearch);
-  emit statusBarVisiblityChanged(state->needsStatusBar);
-  emit loadingChanged(state->isLoading);
-  emit navigationStatusChanged(state->navigation.title, state->navigation.icon);
-
-  m_views.emplace_back(std::move(state));
-
+  emit headerVisiblityChanged(state.needsTopBar);
+  emit searchVisibilityChanged(state.supportsSearch);
+  emit statusBarVisiblityChanged(state.needsStatusBar);
+  emit loadingChanged(state.isLoading);
+  emit navigationStatusChanged(state.navigation.title, state.navigation.icon);
   emit actionsChanged({});
-  emit searchTextChanged(QString());
-  emit searchPlaceholderTextChanged(topState()->placeholderText);
-  view->initialize();
-  view->activate();
-
+  emit searchTextChanged(state.searchText);
+  emit searchPlaceholderTextChanged(state.placeholderText);
   destroyCurrentCompletion();
-  emit currentViewChanged(*m_views.back());
+
+  state.sender->initialize();
+  state.sender->activate();
+
+  emit currentViewChanged(state);
+}
+
+void NavigationController::replaceView(BaseView *view) {
+  QTimer::singleShot(0, this, [this, view]() {
+    m_views.back() = createViewState(view);
+    activateView(*topState());
+  });
+}
+
+void NavigationController::pushView(BaseView *view) {
+  m_frames.back()->viewCount++;
+  m_views.emplace_back(createViewState(view));
+  activateView(*topState());
   emit viewPushed(view);
-
-  if (m_frames.empty()) return;
-
-  auto &frame = m_frames.back();
-  frame->viewCount += 1;
 }
 
 void NavigationController::setSearchAccessory(QWidget *accessory, const BaseView *caller) {
@@ -468,6 +476,10 @@ void NavigationController::setActions(std::unique_ptr<ActionPanelState> panel, c
 size_t NavigationController::viewStackSize() const { return m_views.size(); }
 
 void NavigationController::showWindow() {
+  if (auto popToRoot = m_pendingPopToRoot) {
+    applyPopToRoot(*popToRoot);
+    m_pendingPopToRoot.reset();
+  }
   m_windowOpened = true;
   emit windowVisiblityChanged(true);
 }
@@ -552,6 +564,10 @@ void NavigationController::launch(const QString &id) {
 }
 
 void NavigationController::launch(const std::shared_ptr<AbstractCmd> &cmd) {
+  launch(cmd, completionValues());
+}
+
+void NavigationController::launch(const std::shared_ptr<AbstractCmd> &cmd, const ArgumentValues &arguments) {
   // unload stalled no-view command
   if (!m_frames.empty() && m_frames.back()->viewCount == 0) { m_frames.pop_back(); }
 
@@ -563,7 +579,7 @@ void NavigationController::launch(const std::shared_ptr<AbstractCmd> &cmd) {
   bool shouldCheckPreferences = cmd->type() == CommandType::CommandTypeExtension;
   LaunchProps props;
 
-  props.arguments = completionValues();
+  props.arguments = arguments;
 
   if (shouldCheckPreferences) {
     auto itemId = QString("extension.%1").arg(cmd->uniqueId());
@@ -602,4 +618,19 @@ void NavigationController::launch(const std::shared_ptr<AbstractCmd> &cmd) {
   frame->context->setContext(&m_ctx);
   m_frames.emplace_back(std::move(frame));
   m_frames.back()->context->load(props);
+}
+
+std::unique_ptr<NavigationController::ViewState> NavigationController::createViewState(BaseView *view) const {
+  auto state = std::make_unique<ViewState>();
+  state->sender = view;
+  state->sender->setContext(&m_ctx);
+  state->sender->setCommandController(m_frames.back()->controller.get());
+  state->supportsSearch = view->supportsSearch();
+  state->needsTopBar = view->needsGlobalTopBar();
+  state->needsStatusBar = view->needsGlobalStatusBar();
+  state->placeholderText = view->initialSearchPlaceholderText();
+  state->navigation.title = view->initialNavigationTitle();
+  state->navigation.icon = view->initialNavigationIcon();
+  state->searchAccessory.reset(view->searchBarAccessory());
+  return state;
 }

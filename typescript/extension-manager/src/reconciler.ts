@@ -1,11 +1,11 @@
-import Reconciler, { OpaqueRoot } from 'react-reconciler';
-import { setTimeout, clearTimeout } from 'node:timers';
-import { DefaultEventPriority } from 'react-reconciler/constants';
-import React, { ReactElement } from 'react';
-import { isDeepEqual } from './utils';
-import { bus } from '@vicinae/api';
-import { writeFileSync } from 'node:fs';
-import { inspect } from 'node:util';
+import Reconciler, { OpaqueRoot } from "react-reconciler";
+import { setTimeout, clearTimeout } from "node:timers";
+import { DefaultEventPriority } from "react-reconciler/constants";
+import React, { ReactElement } from "react";
+import { isDeepEqual } from "./utils";
+import { bus } from "@vicinae/api";
+import { writeFileSync } from "node:fs";
+import { inspect } from "node:util";
 
 type LinkNode = {
 	next: LinkNode | null;
@@ -16,17 +16,17 @@ type LinkNode = {
 class ChildList {
 	private m_size: number = 0;
 	private m_front: LinkNode | null = null;
-	private m_indexMap = new Map<Symbol, LinkNode>;
+	private m_indexMap = new Map<Symbol, LinkNode>();
 	private m_rear: LinkNode | null = null;
 
 	insertBefore(before: Instance, data: Instance) {
 		const beforeNode = this.m_indexMap.get(before.id);
 
-		if (!beforeNode) return ;
+		if (!beforeNode) return;
 
 		if (!beforeNode.prev) {
 			this.pushFront(data);
-			return ;
+			return;
 		}
 
 		const node: LinkNode = { data, next: beforeNode, prev: null };
@@ -55,11 +55,17 @@ class ChildList {
 		return true;
 	}
 
-	size() { return this.m_size; }
+	size() {
+		return this.m_size;
+	}
 
-	rear(): Instance | undefined { return this.m_rear?.data;  } 
+	rear(): Instance | undefined {
+		return this.m_rear?.data;
+	}
 
-	front(): Instance | undefined { return this.m_front?.data;  } 
+	front(): Instance | undefined {
+		return this.m_front?.data;
+	}
 
 	toArray(): Instance[] {
 		let instances = new Array<Instance>(this.m_size);
@@ -82,7 +88,7 @@ class ChildList {
 	}
 
 	pushFront(data: Instance) {
-		const node = {data, next: this.m_front, prev: null};
+		const node = { data, next: this.m_front, prev: null };
 
 		if (this.m_front) this.m_front.prev = node;
 
@@ -95,25 +101,24 @@ class ChildList {
 	}
 
 	pushBack(data: Instance) {
-		const node = {data, next: null, prev: this.m_rear};
+		const node = { data, next: null, prev: this.m_rear };
 
 		if (this.m_rear) this.m_rear.next = node;
 
 		this.m_rear = node;
 
-		if (!this.m_front) this.m_front = this.m_rear; 
+		if (!this.m_front) this.m_front = this.m_rear;
 
 		this.m_indexMap.set(node.data.id, node);
 		++this.m_size;
 	}
-};
-
+}
 
 type InstanceType = string;
 type InstanceProps = Record<string, any>;
 type Instance = {
-	id: Symbol,
-	type: InstanceType,
+	id: Symbol;
+	type: InstanceType;
 	props: InstanceProps;
 	dirty: boolean;
 	propsDirty: boolean;
@@ -132,8 +137,7 @@ type ChildSet = {};
 type MyTimeoutHandle = number;
 type NoTimeout = number;
 
-const ctx: HostContext = {
-};
+const ctx: HostContext = {};
 
 const emitDirty = (instance?: Instance) => {
 	let current: Instance | undefined = instance;
@@ -143,18 +147,18 @@ const emitDirty = (instance?: Instance) => {
 		current.dirty = true;
 		current = current.parent;
 	}
-}
+};
 
 function traceWrap(hostConfig: any) {
-  let traceWrappedHostConfig = {} as any;
-  Object.keys(hostConfig).map(key => {
-    const func = hostConfig[key];
-    traceWrappedHostConfig[key] = (...args: any[]) => {
-      console.log(key);
-      return func(...args);
-    };
-  });
-  return traceWrappedHostConfig;
+	let traceWrappedHostConfig = {} as any;
+	Object.keys(hostConfig).map((key) => {
+		const func = hostConfig[key];
+		traceWrappedHostConfig[key] = (...args: any[]) => {
+			console.log(key);
+			return func(...args);
+		};
+	});
+	return traceWrappedHostConfig;
 }
 
 const processProps = (props: Record<string, any>): Record<string, any> => {
@@ -163,13 +167,13 @@ const processProps = (props: Record<string, any>): Record<string, any> => {
 	for (const [k, v] of Object.entries(props)) {
 		if (React.isValidElement(v)) {
 			console.error(`React element in props is ignored for key ${k}`);
-		} else if (k !== 'children') {
+		} else if (k !== "children") {
 			sanitized[k] = v;
 		}
 	}
 
 	return sanitized;
-}
+};
 
 /**
  * Cleanup all event handlers and other things that are related to the instance
@@ -179,7 +183,7 @@ const detachInstance = (instance: Instance) => {
 	for (const child of instance.children) {
 		detachInstance(child);
 	}
-}
+};
 
 type FormInstance = any;
 
@@ -204,8 +208,6 @@ const createHostConfig = (hostCtx: HostContext, callback: () => void) => {
 		supportsPersistence: false,
 		supportsHydration: false,
 
-
-
 		createInstance(type, props, root, ctx, handle): Instance {
 			let { children, key, ...rest } = props;
 
@@ -213,7 +215,7 @@ const createHostConfig = (hostCtx: HostContext, callback: () => void) => {
 			const handlers: string[] = [];
 
 			for (const [k, v] of Object.entries(rest)) {
-				if (typeof v === 'function') {
+				if (typeof v === "function") {
 					const { id } = bus.addEventHandler(v);
 					initialProps[k] = id;
 					handlers.push(id);
@@ -229,8 +231,8 @@ const createHostConfig = (hostCtx: HostContext, callback: () => void) => {
 				children: [],
 				dirty: true,
 				propsDirty: true,
-				_handlers: handlers
-			}
+				_handlers: handlers,
+			};
 		},
 
 		createTextInstance() {
@@ -238,7 +240,7 @@ const createHostConfig = (hostCtx: HostContext, callback: () => void) => {
 		},
 
 		appendInitialChild(parent, child) {
-			hostConfig.appendChild?.(parent, child)
+			hostConfig.appendChild?.(parent, child);
 		},
 
 		finalizeInitialChildren(instance, type, props, root, ctx) {
@@ -280,7 +282,7 @@ const createHostConfig = (hostCtx: HostContext, callback: () => void) => {
 			return false;
 		},
 
-		getRootHostContext(root) { 
+		getRootHostContext(root) {
 			return ctx;
 		},
 
@@ -288,7 +290,9 @@ const createHostConfig = (hostCtx: HostContext, callback: () => void) => {
 			return ctx;
 		},
 
-		getPublicInstance(instance) { return instance; },
+		getPublicInstance(instance) {
+			return instance;
+		},
 
 		prepareForCommit(container) {
 			return null;
@@ -299,7 +303,7 @@ const createHostConfig = (hostCtx: HostContext, callback: () => void) => {
 			return null;
 		},
 
-		preparePortalMount(container) {},
+		preparePortalMount(container) { },
 
 		scheduleTimeout: setTimeout,
 		cancelTimeout: (id: MyTimeoutHandle) => clearTimeout(id),
@@ -315,23 +319,27 @@ const createHostConfig = (hostCtx: HostContext, callback: () => void) => {
 		},
 		*/
 
-		getInstanceFromNode() { return null; },
+		getInstanceFromNode() {
+			return null;
+		},
 
-		beforeActiveInstanceBlur() {},
-		afterActiveInstanceBlur() {},
+		beforeActiveInstanceBlur() { },
+		afterActiveInstanceBlur() { },
 
-		prepareScopeUpdate(scope, instance) {},
-		getInstanceFromScope(scope) { return null },
+		prepareScopeUpdate(scope, instance) { },
+		getInstanceFromScope(scope) {
+			return null;
+		},
 
 		// not sure what this one is really about, as it's undocumented
-		detachDeletedInstance(instance) {},
+		detachDeletedInstance(instance) { },
 
 		appendChild(parent: Instance, child: Instance) {
 			const selfIdx = parent.children.indexOf(child);
 
 			if (selfIdx != -1) {
 				parent.children.splice(selfIdx, 1);
-			}	
+			}
 
 			child.parent = parent;
 			emitDirty(parent);
@@ -344,11 +352,11 @@ const createHostConfig = (hostCtx: HostContext, callback: () => void) => {
 
 		insertBefore(parent, child, beforeChild) {
 			const beforeIndex = parent.children.indexOf(beforeChild);
- 
+
 			// insertBefore is used for reordering
 			const selfIdx = parent.children.indexOf(child);
 
-			if (selfIdx != - 1) {
+			if (selfIdx != -1) {
 				parent.children.splice(selfIdx, 1);
 			}
 
@@ -357,7 +365,7 @@ const createHostConfig = (hostCtx: HostContext, callback: () => void) => {
 				child.parent = parent;
 				emitDirty(parent);
 			} else {
-				throw new Error('Unreachable');
+				throw new Error("Unreachable");
 			}
 		},
 
@@ -368,7 +376,7 @@ const createHostConfig = (hostCtx: HostContext, callback: () => void) => {
 		removeChild(parent: Instance, child: Instance) {
 			const idx = parent.children.indexOf(child);
 
-			if (idx == -1) return ;
+			if (idx == -1) return;
 
 			emitDirty(parent);
 			parent.children.splice(idx, 1);
@@ -380,52 +388,54 @@ const createHostConfig = (hostCtx: HostContext, callback: () => void) => {
 			hostConfig.removeChild?.(container, child);
 		},
 
-		resetTextContent() {},
+		resetTextContent() { },
 
-		commitTextUpdate() {},
+		commitTextUpdate() { },
 
-		commitMount() {},
+		commitMount() { },
 
 		commitUpdate(instance: Instance, type, prevProps, nextProps, handle) {
 			const props: Record<string, any> = {};
 
 			for (const [k, v] of Object.entries(nextProps)) {
-				if (k == 'children') continue ;
+				if (k == "children") continue;
 
 				if (React.isValidElement(v)) {
-					console.warn(`Received react element as prop (key '${k}'), which is unsupported.`);
-					continue ;
+					console.warn(
+						`Received react element as prop (key '${k}'), which is unsupported.`,
+					);
+					continue;
 				}
 
-				if (typeof v === 'function') {
+				if (typeof v === "function") {
 					const old = prevProps[k];
 
-					if (typeof old === 'string') {
+					if (typeof old === "string") {
 						bus.replaceEventHandler(old, v);
 						props[k] = old;
-						continue ;
+						continue;
 					}
 
-					const { id } = bus.addEventHandler(v); 
+					const { id } = bus.addEventHandler(v);
 
 					instance._handlers.push(id);
 					props[k] = id;
-					continue ;
+					continue;
 				}
-				
+
 				props[k] = v;
 			}
 
 			emitDirty(instance.parent);
 			instance.propsDirty = true;
-			instance.props = props; 
+			instance.props = props;
 		},
 
-		replaceContainerChildren() {},
-		hideInstance() {},
-		hideTextInstance() {},
-		unhideInstance() {},
-		unhideTextInstance() {},
+		replaceContainerChildren() { },
+		hideInstance() { },
+		hideTextInstance() { },
+		unhideInstance() { },
+		unhideTextInstance() { },
 
 		clearContainer(container) {
 			container.children = [];
@@ -435,8 +445,7 @@ const createHostConfig = (hostCtx: HostContext, callback: () => void) => {
 		NotPendingTransition: null,
 		HostTransitionContext: {} as any,
 
-		setCurrentUpdatePriority(priority) {
-		},
+		setCurrentUpdatePriority(priority) { },
 
 		getCurrentUpdatePriority() {
 			return DefaultEventPriority;
@@ -446,31 +455,43 @@ const createHostConfig = (hostCtx: HostContext, callback: () => void) => {
 			return DefaultEventPriority;
 		},
 
-		resetFormInstance(form) {},
-		requestPostPaintCallback() {},
-		shouldAttemptEagerTransition() { return false },
+		resetFormInstance(form) { },
+		requestPostPaintCallback() { },
+		shouldAttemptEagerTransition() {
+			return false;
+		},
 
-		trackSchedulerEvent() {},
-		resolveEventType() { return null },
-		resolveEventTimeStamp() { return Date.now(); },
-		maySuspendCommit() { return false },
+		trackSchedulerEvent() { },
+		resolveEventType() {
+			return null;
+		},
+		resolveEventTimeStamp() {
+			return Date.now();
+		},
+		maySuspendCommit() {
+			return false;
+		},
 
-		preloadInstance(type, props) { return false; },
-		startSuspendingCommit() {},
-		suspendInstance(type, props) {},
-		waitForCommitToBeReady() { return null; },
+		preloadInstance(type, props) {
+			return false;
+		},
+		startSuspendingCommit() { },
+		suspendInstance(type, props) { },
+		waitForCommitToBeReady() {
+			return null;
+		},
 	};
 
 	return hostConfig;
-}
+};
 
 export type ViewData = {
 	root: SerializedInstance;
 };
 
 export type RendererConfig = {
-	maxRendersPerSecond?: number,
-	onInitialRender: (views: ViewData[]) => void
+	maxRendersPerSecond?: number;
+	onInitialRender: (views: ViewData[]) => void;
 	onUpdate?: (views: ViewData[]) => void;
 };
 
@@ -488,7 +509,7 @@ const serializeInstance = (instance: Instance): SerializedInstance => {
 		type: instance.type,
 		dirty: instance.dirty,
 		propsDirty: instance.propsDirty,
-		children: instance.children.map(serializeInstance)
+		children: instance.children.map(serializeInstance),
 	};
 
 	instance.dirty = false;
@@ -502,28 +523,27 @@ const serializeInstance = (instance: Instance): SerializedInstance => {
 	}
 	*/
 
-	
 	return obj;
-}
+};
 
 const createContainer = (): Container => {
 	return {
-		id: Symbol('root'),
-		type: 'root',
+		id: Symbol("root"),
+		type: "root",
 		dirty: true,
 		propsDirty: false,
 		props: {},
 		children: [],
 		_handlers: [],
-	}
-}
+	};
+};
 
 const MAX_RENDER_PER_SECOND = 60;
 
 export const createRenderer = (config: RendererConfig) => {
-	const container = createContainer(); 
+	const container = createContainer();
 	let debounce: NodeJS.Timer | null = null;
-	let debounceInterval = 1000 / MAX_RENDER_PER_SECOND;
+	const debounceInterval = 1000 / MAX_RENDER_PER_SECOND;
 	let lastRender = performance.now();
 
 	const renderImpl = () => {
@@ -532,20 +552,26 @@ export const createRenderer = (config: RendererConfig) => {
 				debounce = null;
 
 				const start = performance.now();
-				const views: ViewData[] = [];
 				const root = serializeInstance(container);
 
-
-				//writeFileSync('/tmp/render.txt', `${inspect(root, { depth: null, colors: true })}`);
+				//writeFileSync("/tmp/render.txt", `${inspect(root, { depth: null, colors: true })}`);
 				//appendFileSync('/tmp/render.txt', JSON.stringify(root, null, 2));
 
-				for (let i = 0; i != root.children.length; ++i) {
-					const view = root.children[i];
+				const views = root.children.map<ViewData>((child) => {
+					// We always take the last component in the view container.
+					// In almost every case, the view container should only have one,
+					// but some Raycast extensions have been observed using many, which
+					// is probably not even officially supported.
+					const component = child.children.at(-1);
 
-					views.push({ root: view });
-				}
+					if (!component) {
+						throw new Error(`View without children, this should be impossible`);
+					}
 
-				config.onUpdate?.(views)
+					return { root: component };
+				});
+
+				config.onUpdate?.(views);
 
 				const end = performance.now();
 
@@ -554,30 +580,38 @@ export const createRenderer = (config: RendererConfig) => {
 				lastRender = end;
 			}, debounceInterval);
 		}
-	}
+	};
 
 	const hostConfig = createHostConfig({}, renderImpl);
-	const reconciler = Reconciler(process.env.RECONCILER_TRACE === '1' ? traceWrap(hostConfig) : hostConfig);
+	const reconciler = Reconciler(
+		process.env.RECONCILER_TRACE === "1" ? traceWrap(hostConfig) : hostConfig,
+	);
 
 	return {
 		render(element: ReactElement) {
 			if (!container._root) {
 				container._root = reconciler.createContainer(
-					container, 
-					0, 
-					null, 
-					false, 
-					null, 
-					'', 
-					(error) => { throw error },
-					(error) => { throw error },
-					(error) => { throw error; },
-					() => {},
-					null
+					container,
+					0,
+					null,
+					false,
+					null,
+					"",
+					(error) => {
+						throw error;
+					},
+					(error) => {
+						throw error;
+					},
+					(error) => {
+						throw error;
+					},
+					() => { },
+					null,
 				);
 			}
 
 			reconciler.updateContainer(element, container._root, null, renderImpl);
-		}	
-	}
-}
+		},
+	};
+};

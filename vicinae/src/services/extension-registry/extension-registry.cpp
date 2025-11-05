@@ -12,16 +12,22 @@
 #include <QJsonParseError>
 #include <qfuturewatcher.h>
 #include <qlogging.h>
+#include <qobjectdefs.h>
 
 namespace fs = std::filesystem;
 
 ExtensionRegistry::ExtensionRegistry(LocalStorageService &storage) : m_storage(storage) {
+  using namespace std::chrono_literals;
+
+  m_rescanDebounce.setInterval(100ms);
+  m_rescanDebounce.setSingleShot(true);
   m_watcher->addPath(extensionDir().c_str());
 
   // XXX: we currently do not support removing extensions by filesystem removal
   // An extension should be removed from within Vicinae directly so that other cleanup tasks
   // can be performed.
-  connect(m_watcher, &QFileSystemWatcher::directoryChanged, this, [this]() { requestScan(); });
+  connect(m_watcher, &QFileSystemWatcher::directoryChanged, this, [this]() { m_rescanDebounce.start(); });
+  connect(&m_rescanDebounce, &QTimer::timeout, this, [this]() { requestScan(); });
 }
 
 fs::path ExtensionRegistry::extensionDir() const { return Omnicast::dataDir() / "extensions"; }
@@ -115,20 +121,20 @@ Preference ExtensionRegistry::parsePreferenceFromObject(const QJsonObject &obj) 
   base.setRequired(obj["required"].toBool());
   base.setDefaultValue(obj.value("default"));
 
-  if (type == "textfield") { base.setData(Preference::TextData()); }
-  if (type == "password") { base.setData(Preference::PasswordData()); }
-
-  if (type == "checkbox") {
+  if (type == "textfield") {
+    base.setData(Preference::TextData());
+  } else if (type == "password") {
+    base.setData(Preference::PasswordData());
+  } else if (type == "checkbox") {
     auto checkbox = Preference::CheckboxData(obj["label"].toString());
-
     base.setData(checkbox);
-  }
-
-  if (type == "appPicker") {
-    // XXX: implement later - if we really need it
-  }
-
-  if (type == "dropdown") {
+  } else if (type == "appPicker") {
+    base.setData(Preference::AppPickerData());
+  } else if (type == "file") {
+    base.setData(Preference::FilePickerData());
+  } else if (type == "directory") {
+    base.setData(Preference::DirectoryPickerData());
+  } else if (type == "dropdown") {
     auto data = obj["data"].toArray();
     std::vector<Preference::DropdownData::Option> options;
 
@@ -141,6 +147,8 @@ Preference ExtensionRegistry::parsePreferenceFromObject(const QJsonObject &obj) 
     }
 
     base.setData(Preference::DropdownData{options});
+  } else {
+    qWarning() << "Unknown extension preference type" << type;
   }
 
   return base;
@@ -225,6 +233,7 @@ tl::expected<ExtensionManifest, ManifestError> ExtensionRegistry::scanBundle(con
 
   ExtensionManifest manifest;
   auto obj = json.object();
+  auto deps = obj.value("dependencies").toObject();
 
   manifest.path = path;
   manifest.id = QString::fromStdString(getLastPathComponent(path));
@@ -233,17 +242,14 @@ tl::expected<ExtensionManifest, ManifestError> ExtensionRegistry::scanBundle(con
   manifest.description = obj.value("description").toString();
   manifest.icon = obj.value("icon").toString();
   manifest.author = obj.value("author").toString();
+  manifest.needsRaycastApi = deps.contains(Omnicast::RAYCAST_NPM_API_PACKAGE);
 
-  auto deps = obj.value("dependencies").toObject();
-
-  if (deps.contains(Omnicast::RAYCAST_NPM_API_PACKAGE)) {
-    manifest.provenance = ExtensionManifest::Provenance::Raycast;
-  } else if (deps.contains(Omnicast::VICINAE_NPM_API_PACKAGE)) {
+  if (manifest.id.startsWith("store.vicinae.")) {
     manifest.provenance = ExtensionManifest::Provenance::Vicinae;
+  } else if (manifest.id.startsWith("store.raycast.")) {
+    manifest.provenance = ExtensionManifest::Provenance::Raycast;
   } else {
-    return tl::unexpected(QString("Manifest does not list %1 or %2 as a runtime dependency.")
-                              .arg(Omnicast::VICINAE_NPM_API_PACKAGE)
-                              .arg(Omnicast::RAYCAST_NPM_API_PACKAGE));
+    manifest.provenance = ExtensionManifest::Provenance::Local;
   }
 
   for (const auto &obj : obj.value("categories").toArray()) {

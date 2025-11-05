@@ -1,11 +1,16 @@
 #pragma once
 #include "vicinae.hpp"
+#include "xdgpp/desktop-entry/iterator.hpp"
 #include "xdgpp/env/env.hpp"
 #include <QString>
 #include <QApplication>
 #include <QProcessEnvironment>
+#include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <qtenvironmentvariables.h>
+#include "version.h"
 
 namespace Environment {
 
@@ -28,16 +33,31 @@ inline bool isWlrootsCompositor() {
          desktop.contains("river", Qt::CaseInsensitive);
 }
 
+static inline bool containsIgnoreCase(const std::vector<std::string> &desktops, std::string_view str) {
+  return std::ranges::any_of(desktops, [&](auto &desktop) {
+    return std::ranges::equal(desktop, str, [](auto &&a, auto &&b) {
+      return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+    });
+  });
+}
+
+inline bool isCosmicDesktop() { return containsIgnoreCase(xdgpp::currentDesktop(), "cosmic"); }
+inline bool isPlasmaDesktop() { return containsIgnoreCase(xdgpp::currentDesktop(), "kde"); }
+inline bool isGnomeDesktop() { return containsIgnoreCase(xdgpp::currentDesktop(), "gnome"); }
+
 inline bool isLayerShellEnabled() {
 #ifndef WAYLAND_LAYER_SHELL
   return false;
 #endif
-  return isWaylandSession() && !isGnomeEnvironment() && qEnvironmentVariable("USE_LAYER_SHELL", "1") == "1";
+  if (auto value = qEnvironmentVariable("USE_LAYER_SHELL"); !value.isEmpty()) { return value == "1"; }
+  return isWaylandSession() && !isCosmicDesktop() && !isGnomeEnvironment();
 }
 
 inline bool isHudDisabled() {
   return !isLayerShellEnabled() || qEnvironmentVariable("VICINAE_DISABLE_HUD", "0") == "1";
 }
+
+inline bool hasAppLaunchDebug() { return !qEnvironmentVariable("VICINAE_APP_LAUNCH_DEBUG").isEmpty(); }
 
 /**
  * App image directory if we are running in an appimage.
@@ -54,11 +74,25 @@ inline std::optional<std::filesystem::path> appImageDir() {
  * extension manager.
  */
 inline std::optional<std::filesystem::path> nodeBinaryOverride() {
-  if (auto bin = getenv("NODE_BIN")) return bin;
+  if (auto bin = getenv("VICINAE_NODE_BIN")) return bin;
   return std::nullopt;
 }
 
+inline std::chrono::milliseconds pasteDelay() {
+  using namespace std::chrono_literals;
+  if (const char *delay = getenv("VICINAE_PASTE_DELAY")) {
+    return std::chrono::milliseconds(std::stoi(delay));
+  }
+  return 100ms;
+}
+
 inline bool isAppImage() { return appImageDir().has_value(); }
+
+inline int pixmapCacheLimit() {
+  static constexpr size_t MB = 1024 * 1024;
+  if (const char *delay = getenv("VICINAE_IMAGE_CACHE_SIZE")) { return std::stoi(delay); }
+  return 250 * MB; // we will very rarely reach this threshold anyways
+}
 
 inline QStringList fallbackIconSearchPaths() {
   QStringList list;
@@ -77,6 +111,11 @@ inline QStringList fallbackIconSearchPaths() {
   return list;
 }
 
+inline QString vicinaeApiBaseUrl() {
+  if (const char *url = getenv("VICINAE_API_BASE_URL")) { return url; }
+  return "https://api.vicinae.com/v1";
+}
+
 /**
  * Version of the Vicinae app.
  */
@@ -87,14 +126,14 @@ inline QString version() { return VICINAE_GIT_TAG; }
  */
 inline QString getEnvironmentDescription() {
   QString desc;
+  const QString desktop = qgetenv("XDG_CURRENT_DESKTOP");
 
-  if (isGnomeEnvironment()) {
+  if (!desktop.isEmpty()) {
+    desc = desktop;
+  } else if (isGnomeEnvironment()) {
     desc = "GNOME";
   } else if (isWlrootsCompositor()) {
     desc = "wlroots";
-  } else {
-    const QString desktop = qgetenv("XDG_CURRENT_DESKTOP");
-    desc = desktop.isEmpty() ? "Unknown" : desktop;
   }
 
   if (isWaylandSession()) {

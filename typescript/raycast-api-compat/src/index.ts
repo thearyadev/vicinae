@@ -21,11 +21,12 @@ export {
 	confirmAlert, Alert,
 	open, showInFileBrowser,
 	closeMainWindow, showHUD, clearSearchBar, getSelectedText, popToRoot, PopToRootType,
+	updateCommandMetadata,
 
 	openCommandPreferences, openExtensionPreferences,
 	LaunchType,
 
-
+	AI,
 	OAuth,
 
 	List, Grid, Form, Detail,

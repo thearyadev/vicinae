@@ -3,6 +3,7 @@
 #include "reader.hpp"
 #include "../utils/utils.hpp"
 #include "../env/env.hpp"
+#include <ranges>
 #include <algorithm>
 #include <filesystem>
 #include <iomanip>
@@ -49,8 +50,8 @@ std::optional<std::string_view> DesktopEntry::tryExec() const { return m_tryExec
 
 std::vector<std::string> DesktopEntry::parseExec() const { return parseExec({}); }
 
-std::vector<std::string> DesktopEntry::parseExec(const std::vector<std::string> &uris,
-                                                 bool forceAppend) const {
+std::vector<std::string> DesktopEntry::parseExec(const std::vector<std::string> &uris, bool forceAppend,
+                                                 const std::optional<std::string> &launchPrefix) const {
   if (!m_exec) return {};
 
   ExecParser parser(m_name);
@@ -58,7 +59,12 @@ std::vector<std::string> DesktopEntry::parseExec(const std::vector<std::string> 
   parser.setForceAppend(forceAppend);
   if (m_icon) { parser.setIcon(*m_icon); }
 
-  return parser.parse(m_exec.value(), uris);
+  std::string input;
+
+  if (launchPrefix) { input = launchPrefix.value() + ' '; }
+  input += m_exec.value();
+
+  return parser.parse(input, uris);
 }
 
 std::optional<std::string> DesktopEntry::startupWMClass() const { return m_wmClass; }
@@ -114,6 +120,8 @@ bool DesktopEntry::shouldBeShownInCurrentContext() const {
 std::optional<std::string> DesktopEntry::errorMessage() const { return m_error; }
 
 const std::vector<DesktopEntryAction> &DesktopEntry::actions() const { return m_actions; }
+
+const std::optional<DesktopEntry::TerminalExec> &DesktopEntry::terminalExec() const { return m_terminalExec; }
 
 DesktopEntry::DesktopEntry(const fs::path &path, const ParseOptions &opts) {
   std::error_code ec;
@@ -181,7 +189,19 @@ DesktopEntry::DesktopEntry(std::string_view data, const ParseOptions &opts) {
       }
     }
   }
+
+  bool isTerminalEmulator = std::ranges::contains(m_categories, "TerminalEmulator");
+
+  if (isTerminalEmulator) {
+    TerminalExec texec;
+    if (auto appId = group->key("X-TerminalArgAppId")) { texec.appId = appId->asString(); }
+    if (auto title = group->key("X-TerminalArgTitle")) { texec.title = title->asString(); }
+    if (auto dir = group->key("X-TerminalArgDir")) { texec.dir = dir->asString(); }
+    if (auto hold = group->key("X-TerminalArgHold")) { texec.hold = hold->asString(); }
+    m_terminalExec = texec;
+  }
 }
+
 }; // namespace xdgpp
 
 std::ostream &operator<<(std::ostream &os, const xdgpp::DesktopEntry &entry) {

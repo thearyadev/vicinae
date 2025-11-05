@@ -18,6 +18,7 @@
 #include <qthread.h>
 #include <qtmetamacros.h>
 #include <qwidget.h>
+#include <optional>
 
 class ExtensionCommand : public AbstractCmd {
   QString _extensionId;
@@ -28,15 +29,18 @@ class ExtensionCommand : public AbstractCmd {
   std::filesystem::path m_path;
   ExtensionManifest::Command m_command;
   QString m_author;
+  std::optional<QString> m_subtitleOverride;
 
 public:
   ExtensionCommand(const ExtensionManifest::Command &command) : m_command(command) {}
 
-  QString author() const override {
+  QString author() const override { return m_author; }
+  QString authorSuffixed() const override {
     // as we plan on having our own store, we want raycast extension authors
     // to be properly segmented.
     if (isRaycast()) return m_author + "@raycast";
-    return m_author;
+    if (isVicinae()) return m_author + "@vicinae";
+    return m_author + "@local";
   }
 
   QString extensionId() const override;
@@ -59,6 +63,8 @@ public:
   std::vector<Preference> preferences() const override { return m_command.preferences; }
 
   bool isRaycast() const { return m_command.provenance == ExtensionManifest::Provenance::Raycast; }
+  bool isVicinae() const { return m_command.provenance == ExtensionManifest::Provenance::Vicinae; }
+  bool isLocal() const { return m_command.provenance == ExtensionManifest::Provenance::Local; }
 
   QString uniqueId() const override;
   QString name() const override;
@@ -69,6 +75,9 @@ public:
   QString repositoryName() const override;
 
   bool isDefaultDisabled() const override;
+
+  std::optional<QString> overriddenSubtitle() const { return m_subtitleOverride; }
+  void setSubtitleOverride(const std::optional<QString> &subtitle) { m_subtitleOverride = subtitle; }
 
   void setPath(const std::filesystem::path &path);
   void setExtensionTitle(const QString &title);

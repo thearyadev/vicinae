@@ -8,10 +8,10 @@
 #include "ui/dialog/dialog.hpp"
 #include "ui/image/url.hpp"
 #include <QString>
+#include <chrono>
 #include <google/protobuf/message.h>
 #include <numeric>
 #include <qevent.h>
-#include <ranges>
 
 class BaseView;
 class DialogContentWidget;
@@ -122,8 +122,12 @@ private:
     for (int i = 0; i != actions.size() && i != m_defaultShortcuts.size(); ++i) {
       auto &action = actions[i];
       auto &shortcut = m_defaultShortcuts[i];
+      auto existing = action->shortcut();
 
-      action->addShortcut(shortcut);
+      // always prioritize default shortcut, but still keeps the one
+      // that was set before as a secondary shortcut (usually not shown in UI).
+      action->setShortcut(shortcut);
+      if (existing) { action->addShortcut(*existing); }
     }
   }
 
@@ -202,7 +206,6 @@ public:
     bool accessoryVisibility = true;
     std::optional<CompleterState> completer;
     std::unique_ptr<ActionPanelState> actionPanelState;
-    bool loading;
 
     bool isLoading = false;
     bool supportsSearch = true;
@@ -213,7 +216,42 @@ public:
     ~ViewState();
   };
 
+signals:
+  void currentViewStateChanged(const ViewState &state) const;
+  void currentViewChanged(const ViewState &state) const;
+  void viewPushed(const BaseView *view);
+  void viewPoped(const BaseView *view);
+  void actionPanelVisibilityChanged(bool visible);
+  void actionsChanged(const ActionPanelState &actions) const;
+  void windowVisiblityChanged(bool visible);
+  void searchTextSelected() const;
+  void searchTextChanged(const QString &text) const;
+  void searchPlaceholderTextChanged(const QString &text) const;
+  void navigationStatusChanged(const QString &text, const ImageURL &icon) const;
+  void navigationSuffixIconChanged(const std::optional<ImageURL> &icon) const;
+  void confirmAlertRequested(DialogContentWidget *widget);
+  void loadingChanged(bool value) const;
+  void showHudRequested(const QString &title, const std::optional<ImageURL> &icon);
+
+  void completionValuesChanged(const ArgumentValues &values) const;
+
+  void invalidCompletionFired();
+
+  void searchAccessoryChanged(QWidget *widget) const;
+  void searchAccessoryCleared() const;
+  void searchAccessoryVisiblityChanged(bool visible) const;
+
+  void completionCreated(const CompleterState &completer) const;
+  void completionDestroyed() const;
+
+  void headerVisiblityChanged(bool value);
+  void searchVisibilityChanged(bool value);
+  void statusBarVisiblityChanged(bool value);
+  void windowActivationChanged(bool value) const;
+
+public:
   void closeWindow(const CloseWindowOptions &settings = {});
+  void closeWindow(const CloseWindowOptions &settings, std::chrono::milliseconds delay);
   void showWindow();
   void toggleWindow();
   bool isWindowOpened() const;
@@ -237,6 +275,7 @@ public:
   void setSearchText(const QString &text, const BaseView *caller = nullptr);
 
   void setLoading(bool value, const BaseView *caller = nullptr);
+  bool isLoading(const BaseView *caller = nullptr) const;
 
   void popToRoot(const PopToRootOptions &opts = {});
 
@@ -289,6 +328,7 @@ public:
   void showHud(const QString &title, const std::optional<ImageURL> &icon = std::nullopt);
 
   void launch(const std::shared_ptr<AbstractCmd> &cmd);
+  void launch(const std::shared_ptr<AbstractCmd> &cmd, const ArgumentValues &arguments);
   void launch(const QString &id);
   const AbstractCmd *activeCommand() const;
   CommandFrame *activeFrame() const { return m_frames.back().get(); }
@@ -307,49 +347,35 @@ public:
   void goBack(const GoBackOptions &opts = {});
 
   void popCurrentView();
+  template <typename T> void pushView() { pushView(new T); }
   void pushView(BaseView *view);
+
+  /**
+   * Replace the current view without unloading the current command.
+   * Can be useful to display introduction views before pushing the actual view.
+   */
+  void replaceView(BaseView *view);
+  template <typename T> void replaceView() { replaceView(new T); }
+
   size_t viewStackSize() const;
   const ViewState *topState() const;
   ViewState *topState();
 
   NavigationController(ApplicationContext &ctx);
 
-signals:
-  void currentViewStateChanged(const ViewState &state) const;
-  void currentViewChanged(const ViewState &state) const;
-  void viewPushed(const BaseView *view);
-  void viewPoped(const BaseView *view);
-  void actionPanelVisibilityChanged(bool visible);
-  void actionsChanged(const ActionPanelState &actions) const;
-  void windowVisiblityChanged(bool visible);
-  void searchTextSelected() const;
-  void searchTextChanged(const QString &text) const;
-  void searchPlaceholderTextChanged(const QString &text) const;
-  void navigationStatusChanged(const QString &text, const ImageURL &icon) const;
-  void navigationSuffixIconChanged(const std::optional<ImageURL> &icon) const;
-  void confirmAlertRequested(DialogContentWidget *widget);
-  void loadingChanged(bool value) const;
-  void showHudRequested(const QString &title, const std::optional<ImageURL> &icon);
-
-  void completionValuesChanged(const ArgumentValues &values) const;
-
-  void invalidCompletionFired();
-
-  void searchAccessoryChanged(QWidget *widget) const;
-  void searchAccessoryCleared() const;
-  void searchAccessoryVisiblityChanged(bool visible) const;
-
-  void completionCreated(const CompleterState &completer) const;
-  void completionDestroyed() const;
-
-  void headerVisiblityChanged(bool value);
-  void searchVisibilityChanged(bool value);
-  void statusBarVisiblityChanged(bool value);
-  void windowActivationChanged(bool value) const;
-
 private:
+  std::unique_ptr<ViewState> createViewState(BaseView *view) const;
+  void activateView(const ViewState &state);
+
   ApplicationContext &m_ctx;
   std::vector<std::unique_ptr<CommandFrame>> m_frames;
+
+  struct PendingPopToRoot {
+    PopToRootType type = PopToRootType::Immediate;
+    bool clearSearch = false;
+  };
+
+  void applyPopToRoot(const PendingPopToRoot &popToRoot);
 
   ViewState *findViewState(const BaseView *view);
   const ViewState *findViewState(const BaseView *view) const;
@@ -363,4 +389,5 @@ private:
   bool m_instantDismiss = false;
   bool m_closeOnFocusLoss = false;
   std::vector<std::unique_ptr<ViewState>> m_views;
+  std::optional<PendingPopToRoot> m_pendingPopToRoot;
 };

@@ -4,7 +4,6 @@
 #include "services/extension-registry/extension-registry.hpp"
 #include "ui/screenshot-list/screenshot-list.hpp"
 #include "ui/thumbnail/thumbnail.hpp"
-#include "ui/toast/toast.hpp"
 #include "utils.hpp"
 #include "services/toast/toast-service.hpp"
 
@@ -21,7 +20,7 @@ Stack RaycastStoreDetailView::createHeader() {
   auto metadata = HStack()
                       .add(author)
                       .add(downloadCount)
-                      .addIf(!m_ext.platforms.isEmpty(),
+                      .addIf(!m_ext.platforms.empty(),
                              [&]() {
                                auto platforms = HStack().spacing(5);
 
@@ -43,6 +42,7 @@ Stack RaycastStoreDetailView::createHeader() {
                   .add(VStack().addTitle(m_ext.title).add(metadata).margins(0, 4, 0, 4).justifyBetween())
                   .spacing(20);
 
+  m_installedAccessory->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   m_installedAccessory->setAccessory({
       .text = "Installed",
       .color = SemanticColor::Green,
@@ -135,7 +135,7 @@ QWidget *RaycastStoreDetailView::createSideMetadataSection() {
   return VStack()
       .add(readmeLink)
       .add(lastUpdate)
-      .addIf(!m_ext.contributors.isEmpty(),
+      .addIf(!m_ext.contributors.empty(),
              [&]() {
                return VStack()
                    .addText("Contributors", SemanticColor::TextMuted)
@@ -191,13 +191,14 @@ void RaycastStoreDetailView::createActions() {
               return;
             }
 
-            registry->installFromZip(ext.id, result->toStdString(), [toast](bool ok) {
-              if (!ok) {
-                toast->failure("Failed to extract extension archive");
-                return;
-              }
-              toast->success("Extension installed");
-            });
+            registry->installFromZip(QString("store.raycast.%1").arg(ext.name), result->toStdString(),
+                                     [toast](bool ok) {
+                                       if (!ok) {
+                                         toast->failure("Failed to extract extension archive");
+                                         return;
+                                       }
+                                       toast->success("Extension installed");
+                                     });
           });
 
           auto downloadResult = store->downloadExtension(ext.download_url);
@@ -243,10 +244,16 @@ QString RaycastStoreDetailView::initialNavigationTitle() const {
 }
 
 QWidget *RaycastStoreDetailView::createUI(const Raycast::Extension &ext) {
-  return VStack().add(createPresentationSection()).add(createContentSection()).divided(1).buildWidget();
+  return VStack()
+      .add(createPresentationSection())
+      .add(createContentSection())
+      .addStretch()
+      .divided(1)
+      .buildWidget();
 }
 
 void RaycastStoreDetailView::setupUI(const Raycast::Extension &extension) {
   m_scrollArea->setWidget(createUI(extension));
+  m_scrollArea->setFocusPolicy(Qt::StrongFocus);
   VStack().add(m_scrollArea).imbue(this);
 }
