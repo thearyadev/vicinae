@@ -9,17 +9,26 @@
 #include <qjsonobject.h>
 #include <qlogging.h>
 
+ImageLikeModel ListModelParser::parseListItemIcon(const QJsonValue &value) const {
+  if (value.isObject()) {
+    // we ignore the tooltip for now
+    auto obj = value.toObject();
+    if (obj.contains("value")) { return ImageModelParser().parse(obj.value("value")); }
+  }
+
+  return ImageModelParser().parse(value);
+}
+
 ListItemViewModel ListModelParser::parseListItem(const QJsonObject &instance, size_t index) {
   ListItemViewModel model;
   auto props = instance.value("props").toObject();
   auto children = instance.value("children").toArray();
 
   model.id = props["id"].toString(QString::number(index));
-
   model.title = props["title"].toString();
   model.subtitle = props["subtitle"].toString();
 
-  if (props.contains("icon")) { model.icon = ImageModelParser().parse((props.value("icon"))); }
+  if (props.contains("icon")) { model.icon = parseListItemIcon(props.value("icon")); }
 
   {
     auto keywords = props.value("keywords").toArray();

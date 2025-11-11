@@ -2,6 +2,7 @@
 #include "common.hpp"
 #include "proto/daemon.pb.h"
 #include <QDebug>
+#include "services/oauth/oauth-service.hpp"
 #include "theme/theme-db.hpp"
 #include "root-search/extensions/extension-root-provider.hpp"
 #include "services/window-manager/window-manager.hpp"
@@ -134,30 +135,21 @@ IpcCommandHandler::processDmenu(const proto::ext::daemon::DmenuRequest &request)
   auto &nav = m_ctx.navigation;
   QPromise<proto::ext::daemon::Response *> promise;
   auto future = promise.future();
-  DMenuListView::DmenuPayload payload;
-
-  payload.raw = request.raw_content();
-  payload.placeholder = request.placeholder();
-  payload.sectionTitle = request.section_title();
-  payload.noSection = request.no_section();
-  payload.navigationTitle = request.navigation_title();
-
-  auto view = new DMenuListView(payload);
+  auto view = new DMenu::View(DMenu::Payload::fromProto(request));
   auto watcher = new Watcher;
 
   watcher->setFuture(future);
 
   QObject::connect(watcher, &Watcher::canceled, [nav = nav.get()]() { nav->closeWindow(); });
   QObject::connect(watcher, &Watcher::finished, [watcher]() { watcher->deleteLater(); });
-  QObject::connect(view, &DMenuListView::selected,
-                   [promise = std::move(promise)](const QString &text) mutable {
-                     auto dmenuRes = new proto::ext::daemon::DmenuResponse;
-                     auto res = new proto::ext::daemon::Response;
-                     res->set_allocated_dmenu(dmenuRes);
-                     dmenuRes->set_output(text.toStdString());
-                     promise.addResult(res);
-                     promise.finish();
-                   });
+  QObject::connect(view, &DMenu::View::selected, [promise = std::move(promise)](const QString &text) mutable {
+    auto dmenuRes = new proto::ext::daemon::DmenuResponse;
+    auto res = new proto::ext::daemon::Response;
+    res->set_allocated_dmenu(dmenuRes);
+    dmenuRes->set_output(text.toStdString());
+    promise.addResult(res);
+    promise.finish();
+  });
 
   nav->popToRoot({.clearSearch = false});
   nav->pushView(view);
@@ -172,30 +164,41 @@ tl::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
     return tl::unexpected("Unsupported url scheme " + url.scheme().toStdString());
   }
 
+  qDebug() << "goot deeplink" << url.toString();
+
   QUrlQuery query(url.query(QUrl::FullyDecoded));
 
-  if (url.host() == "ping") { return {}; }
+  // Command may be in host (raycast://) or as first part of path (com.raycast:/)
+  QString command = url.host();
+  QString path = url.path();
+  if (command.isEmpty() && !path.isEmpty()) {
+    QStringList pathParts = path.split('/', Qt::SkipEmptyParts);
+    command = pathParts.at(0);
+    path = "/" + pathParts.mid(1).join('/');
+  }
 
-  if (url.host() == "toggle") {
+  if (command == "ping") { return {}; }
+
+  if (command == "toggle") {
     m_ctx.navigation->toggleWindow();
     return {};
   }
 
-  if (url.host() == "settings") {
-    if (url.path() == "/open") {
+  if (command == "settings") {
+    if (path == "/open") {
       m_ctx.settings->openWindow();
 
       if (auto text = query.queryItemValue("tab"); !text.isEmpty()) { m_ctx.settings->openTab(text); }
 
       return {};
     }
-    if (url.path() == "/close") {
+    if (path == "/close") {
       m_ctx.settings->closeWindow();
       return {};
     }
   }
 
-  if (url.host() == "close") {
+  if (command == "close") {
     if (!m_ctx.navigation->isWindowOpened()) return tl::unexpected("Already closed");
 
     CloseWindowOptions opts;
@@ -213,7 +216,7 @@ tl::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
     return {};
   }
 
-  if (url.host() == "open") {
+  if (command == "open") {
     if (m_ctx.navigation->isWindowOpened()) return tl::unexpected("Already opened");
     if (auto text = query.queryItemValue("popToRoot"); text == "true" || text == "1") {
       m_ctx.navigation->popToRoot();
@@ -223,12 +226,12 @@ tl::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
     return {};
   }
 
-  if (url.host() == "pop_current") {
+  if (command == "pop_current") {
     m_ctx.navigation->popCurrentView();
     return {};
   }
 
-  if (url.host() == "pop_to_root") {
+  if (command == "pop_to_root") {
     PopToRootOptions opts;
 
     if (auto text = query.queryItemValue("clearSearch"); !text.isEmpty()) {
@@ -239,16 +242,16 @@ tl::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
     return {};
   }
 
-  if (url.host() == "toast") {
+  if (command == "toast") {
     QString title = query.hasQueryItem("title") ? query.queryItemValue("title") : "Toast";
     m_ctx.services->toastService()->setToast(title, ToastStyle::Info);
     return {};
   }
 
-  if (url.host() == "extensions") {
+  if (command == "extensions") {
     auto root = m_ctx.services->rootItemManager();
 
-    auto components = url.path().sliced(1).split('/');
+    auto components = path.sliced(1).split('/');
 
     if (components.size() < 3) {
       qWarning() << "Invalid use of extensions verb: expected format is "
@@ -308,8 +311,8 @@ tl::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
     return {};
   }
 
-  if (url.host() == "theme") {
-    auto components = url.path().sliced(1).split('/');
+  if (command == "theme") {
+    auto components = path.sliced(1).split('/');
     auto verb = components.at(0);
 
     if (verb == "set") {
@@ -343,7 +346,15 @@ tl::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
     }
   }
 
-  if (url.host() == "api") {
+  if (command == "oauth") {
+    auto oauth = m_ctx.services->oauthService();
+    QString code = query.queryItemValue("code");
+    QString state = query.queryItemValue("state");
+    oauth->fullfillRequest(state, code);
+    return {};
+  }
+
+  if (command == "api") {
     auto registry = m_ctx.services->extensionRegistry();
     auto id = query.queryItemValue("id");
 
@@ -352,7 +363,7 @@ tl::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
       return {};
     }
 
-    if (url.path() == "/extensions/develop/start") {
+    if (path == "/extensions/develop/start") {
       m_ctx.services->extensionManager()->addDevelopmentSession(id);
 
       qInfo() << "Start extension development session for" << id;
@@ -363,7 +374,7 @@ tl::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
       return {};
     }
 
-    if (url.path() == "/extensions/develop/refresh") {
+    if (path == "/extensions/develop/refresh") {
       qInfo() << "Refreshing extension development for" << id;
 
       // we just rescan all bundles, we don't really need to do it incrementally for now
@@ -379,7 +390,7 @@ tl::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
       return {};
     }
 
-    if (url.path() == "/extensions/develop/stop") {
+    if (path == "/extensions/develop/stop") {
       m_ctx.services->extensionManager()->removeDevelopmentSession(id);
       qInfo() << "Stopping extension development for" << id;
       // stopping a development session doesn't remove the bundle, but if a command
@@ -389,8 +400,8 @@ tl::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
     }
   }
 
-  if (url.host() == "internal") {
-    if (url.path() == "/restart-extension-runtime") {
+  if (command == "internal") {
+    if (path == "/restart-extension-runtime") {
       qInfo() << "Restarting extension runtime....";
       m_ctx.navigation->popToRoot();
       m_ctx.services->extensionManager()->start();

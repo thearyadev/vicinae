@@ -1,13 +1,13 @@
-import * as React from "react";
-
-import type { ListItemDetailProps } from "../api/components/list";
-import { ImageLike } from "../api/image";
-import { SerializedColorLike } from "../api/color";
-import { Keyboard } from "../api/keyboard";
-import { Grid } from "../api/components/grid";
-
-import "react";
-import type { Application, DatePickerType, Quicklink } from "../src";
+import type * as React from "react";
+import type {
+	DatePickerType,
+	Grid,
+	Keyboard,
+	List,
+	Quicklink,
+	SerializedColorLike,
+	SerializedImageLike,
+} from "../src";
 
 type BaseFormField = {
 	onBlur?: Function;
@@ -19,7 +19,7 @@ declare module "react" {
 	namespace JSX {
 		interface IntrinsicElements {
 			view: {
-				children: ReactNode;
+				children: React.ReactNode;
 			};
 			detail: {
 				navigationTitle?: string;
@@ -44,18 +44,24 @@ declare module "react" {
 				title: string;
 				id?: string;
 				subtitle?: string;
-				icon?: ImageLike;
+				icon?:
+					| SerializedImageLike
+					| {
+							value?: SerializedImageLike | null;
+							tooltip: string;
+					  };
 				keywords?: string[];
-				children?: ReactNode;
+				accessories?: List.Item.SerializedAccessory[];
+				children?: React.ReactNode;
 			};
-			"list-item-detail": ListItemDetailProps;
+			"list-item-detail": List.Item.Detail.Props;
 			"list-item-detail-metadata": any;
 
 			grid: {
 				inset?: Grid.Inset;
 				columns?: number;
 				fit: Grid.Fit;
-				aspectRatio: Grid.AspectRatio;
+				aspectRatio: number;
 
 				children?: React.ReactNode;
 				filtering?: boolean;
@@ -70,7 +76,7 @@ declare module "react" {
 				inset?: Grid.Inset;
 				columns?: number;
 				fit?: Grid.Fit;
-				aspectRatio?: Grid.AspectRatio;
+				aspectRatio?: number;
 
 				title?: string;
 				subtitle?: string;
@@ -80,18 +86,21 @@ declare module "react" {
 				title?: string;
 				id?: string;
 				subtitle?: string;
-				content?:
-				| ImageLike
-				| { color: ColorLike }
-				| { value: ImageLike; tooltip?: string };
+				content?: SerializedImageLike | { color: SerializedColorLike };
+				tooltip?: string;
 				keywords?: string[];
-				children?: ReactNode;
+				accessory?: {
+					icon?: SerializedImageLike;
+					tooltip?: string | null;
+				};
+				children?: React.ReactNode;
 			};
 
 			"empty-view": {
 				description?: string;
 				title?: string;
-				icon?: ImageLike;
+				icon?: SerializedImageLike;
+				children?: React.ReactNode;
 			};
 			metadata: {
 				children?: React.ReactNode;
@@ -99,7 +108,7 @@ declare module "react" {
 			"metadata-label": {
 				title: string;
 				text: string;
-				icon?: ImageLike;
+				icon?: SerializedImageLike;
 			};
 			"metadata-separator": {};
 			"metadata-link": {
@@ -113,7 +122,7 @@ declare module "react" {
 			};
 			"action-panel-submenu": {
 				title: string;
-				icon?: ImageLike;
+				icon?: SerializedImageLike;
 				onOpen?: () => void;
 				onSearchTextChange?: (text: string) => void;
 				children?: React.ReactNode;
@@ -126,8 +135,8 @@ declare module "react" {
 				title: string;
 				onAction: () => void;
 				onSubmit?: Function;
-				shortcut?: Keyboard.Shortcut;
-				icon?: ImageLike;
+				shortcut?: Keyboard.Shortcut | Keyboard.Shortcut.Common;
+				icon?: SerializedImageLike;
 				autoFocus?: boolean;
 				type?: string;
 				quicklink?: Quicklink;
@@ -138,7 +147,7 @@ declare module "react" {
 			};
 			"tag-item": {
 				color?: SerializedColorLike;
-				icon?: ImageLike;
+				icon?: SerializedImageLike;
 				text?: string;
 				onAction?: () => void;
 			};
@@ -157,7 +166,7 @@ declare module "react" {
 			"tag-picker-item": {
 				title: string;
 				value: string;
-				icon?: ImageLike;
+				icon?: SerializedImageLike;
 			};
 			"text-area-field": BaseFormField & {};
 			"file-picker-field": BaseFormField & {
@@ -167,7 +176,7 @@ declare module "react" {
 				showHiddenFiles?: boolean;
 			};
 			"dropdown-field": BaseFormField & {
-				children?: ReactNode;
+				children?: React.ReactNode;
 			};
 			"date-picker-field": BaseFormField & {
 				min?: Date;
@@ -181,16 +190,16 @@ declare module "react" {
 			dropdown: {
 				onChange?: Function;
 				onSearchTextChange?: (text: string) => void;
-				children?: ReactNode;
+				children?: React.ReactNode;
 			};
 			"dropdown-section": {
 				title?: string;
-				children: ReactNode;
+				children: React.ReactNode;
 			};
 			"dropdown-item": {
 				title: string;
 				value: string;
-				icon?: ImageLike;
+				icon?: SerializedImageLike;
 				keywords?: string[];
 			};
 

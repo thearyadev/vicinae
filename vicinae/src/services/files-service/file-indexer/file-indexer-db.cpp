@@ -18,6 +18,7 @@ static const std::vector<std::string> SQLITE_PRAGMAS = {
 	"PRAGMA journal_mode = WAL",
 	"PRAGMA synchronous = normal",
 	"PRAGMA temp_store = memory",
+	"PRAGMA busy_timeout = 100",
 	// "PRAGMA mmap_size = 30000000000"
 };
 // clang-format on
@@ -149,12 +150,47 @@ FileIndexerDatabase::ScanRecord FileIndexerDatabase::mapScan(const QSqlQuery &qu
   return record;
 }
 
-std::optional<FileIndexerDatabase::ScanRecord> FileIndexerDatabase::getLastScan() const {
+std::optional<FileIndexerDatabase::ScanRecord>
+FileIndexerDatabase::getLastSuccessfulScan(const std::filesystem::path &path) const {
   QSqlQuery query(m_db);
+  query.prepare("SELECT id, status, created_at, entrypoint, type "
+                "FROM scan_history "
+                "WHERE type in (:type1, :type2) "
+                "AND status = :status "
+                "AND entrypoint = :entrypoint "
+                "ORDER BY created_at "
+                "DESC LIMIT 1");
 
-  if (!query.exec("SELECT id, status, created_at, entrypoint, type FROM scan_history ORDER BY created_at "
-                  "DESC LIMIT 1")) {
-    qCritical() << "Failed to list scan records" << query.lastError();
+  query.bindValue(":type1", static_cast<quint8>(ScanType::Full));
+  query.bindValue(":type2", static_cast<quint8>(ScanType::Incremental));
+  query.bindValue(":status", static_cast<quint8>(ScanStatus::Succeeded));
+  query.bindValue(":entrypoint", path.c_str());
+
+  if (!query.exec()) {
+    qCritical() << "Failed to get last successful scan record" << query.lastError();
+    return {};
+  }
+
+  if (!query.next()) return std::nullopt;
+
+  return mapScan(query);
+}
+
+std::optional<FileIndexerDatabase::ScanRecord>
+FileIndexerDatabase::getLastScan(const std::filesystem::path &path, ScanType scanType) const {
+  QSqlQuery query(m_db);
+  query.prepare("SELECT id, status, created_at, entrypoint, type "
+                "FROM scan_history "
+                "WHERE type = :type "
+                "AND entrypoint = :entrypoint "
+                "ORDER BY created_at "
+                "DESC LIMIT 1");
+
+  query.bindValue(":type", static_cast<quint8>(scanType));
+  query.bindValue(":entrypoint", path.c_str());
+
+  if (!query.exec()) {
+    qCritical() << "Failed to get last scan record" << query.lastError();
     return {};
   }
 
@@ -182,11 +218,14 @@ std::vector<FileIndexerDatabase::ScanRecord> FileIndexerDatabase::listScans() {
   return records;
 }
 
-std::vector<FileIndexerDatabase::ScanRecord> FileIndexerDatabase::listStartedScans() {
+std::vector<FileIndexerDatabase::ScanRecord> FileIndexerDatabase::listScans(ScanType scanType,
+                                                                            ScanStatus scanStatus) {
   QSqlQuery query(m_db);
 
-  query.prepare("SELECT id, status, created_at, entrypoint, type FROM scan_history WHERE status = :status");
+  query.prepare("SELECT id, status, created_at, entrypoint, type "
+                "FROM scan_history WHERE status = :status and type = :type");
   query.bindValue(":status", static_cast<quint8>(ScanStatus::Started));
+  query.bindValue(":type", static_cast<quint8>(scanType));
 
   if (!query.exec()) {
     qCritical() << "Failed to list started scan records" << query.lastError();
@@ -264,6 +303,14 @@ void FileIndexerDatabase::deleteIndexedFiles(const std::vector<fs::path> &paths)
   }
 
   if (!m_db.commit()) { qCritical() << "Failed to commit"; }
+}
+
+void FileIndexerDatabase::deleteAllIndexedFiles() {
+  QSqlQuery query(m_db);
+
+  if (!query.exec("DELETE FROM indexed_file")) {
+    qCritical() << "Failed to delete all indexed files" << query.lastError();
+  }
 }
 
 void FileIndexerDatabase::indexEvents(const std::vector<FileEvent> &events) {

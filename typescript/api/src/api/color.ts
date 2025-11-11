@@ -1,3 +1,5 @@
+import * as ui from "./proto/ui";
+
 type DynamicColor = {
 	dark: string;
 	light: string;
@@ -22,12 +24,23 @@ export enum Color {
 }
 
 export type ColorLike = Color.Dynamic | Color.Raw | Color;
-export type SerializedColorLike = Color.Dynamic | string;
+export type SerializedColorLike = ui.ColorLike;
 
 export const serializeColorLike = (color: ColorLike): SerializedColorLike => {
-	if (typeof color == "string") {
-		return color;
+	const colorLike = ui.ColorLike.create();
+
+	if (typeof color === "string") {
+		colorLike.raw = color;
+	} else {
+		// It's a DynamicColor
+		const dynamicColor = ui.DynamicColor.create();
+		dynamicColor.light = color.light;
+		dynamicColor.dark = color.dark;
+		if (color.adjustContrast !== undefined) {
+			dynamicColor.adjustContrast = color.adjustContrast;
+		}
+		colorLike.dynamic = dynamicColor;
 	}
 
-	return color;
+	return colorLike;
 };
