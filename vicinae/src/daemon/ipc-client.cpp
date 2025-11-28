@@ -5,7 +5,7 @@
 #include <chrono>
 #include <iostream>
 #include <qlocalsocket.h>
-#include <random>
+#include <qurlquery.h>
 #include <stdexcept>
 
 namespace Daemon = proto::ext::daemon;
@@ -17,7 +17,7 @@ class FailedToConnectException : public std::exception {
   }
 };
 
-void DaemonIpcClient::writeRequest(const Daemon::Request &req) {
+bool DaemonIpcClient::writeRequest(const Daemon::Request &req) {
   std::string data;
   QByteArray message;
   QDataStream dataStream(&message, QIODevice::WriteOnly);
@@ -25,7 +25,23 @@ void DaemonIpcClient::writeRequest(const Daemon::Request &req) {
   req.SerializeToString(&data);
   dataStream << QByteArray(data.data(), data.size());
   m_conn.write(message);
-  m_conn.waitForBytesWritten(1000);
+  return m_conn.waitForBytesWritten(1000);
+}
+
+bool DaemonIpcClient::kill() {
+  if (!connect()) return false;
+
+  proto::ext::daemon::Request req;
+  auto urlReq = new Daemon::UrlRequest();
+
+  urlReq->set_url("vicinae://kill");
+  req.set_allocated_url(urlReq);
+
+  if (!writeRequest(req)) { return false; }
+
+  // the server will give no response as it will get instantly killed.
+  // However, we need to wait for the socket disconnection to make sure cleanup was fully performed.
+  return m_conn.waitForDisconnected();
 }
 
 void DaemonIpcClient::launchApp(const std::string &id, const std::vector<std::string> &args,
@@ -71,19 +87,31 @@ std::vector<proto::ext::daemon::AppInfo> DaemonIpcClient::listApps(bool withActi
   return apps;
 }
 
-void DaemonIpcClient::toggle() {
+void DaemonIpcClient::toggle(const DaemonIpcClient::ToggleSettings &settings) {
   QUrl url;
+  QUrlQuery query;
+
+  if (settings.query) { query.addQueryItem("fallbackText", settings.query->c_str()); }
+
   url.setScheme(Omnicast::APP_SCHEME);
   url.setHost("toggle");
+  url.setQuery(query);
+
   if (auto res = deeplink(url); !res) {
     throw std::runtime_error("Failed to toggle: " + res.error().toStdString());
   }
 }
 
-bool DaemonIpcClient::open() {
+bool DaemonIpcClient::open(const OpenSettings &settings) {
   QUrl url;
+  QUrlQuery query;
+
+  if (settings.query) { query.addQueryItem("fallbackText", settings.query->c_str()); }
+
   url.setScheme(Omnicast::APP_SCHEME);
   url.setHost("open");
+  url.setQuery(query);
+
   return deeplink(url).has_value();
 }
 

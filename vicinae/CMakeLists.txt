@@ -493,6 +493,8 @@ set(SRCS
 
 	src/services/extension-registry/extension-registry.hpp
 	src/services/extension-registry/extension-registry.cpp
+	src/services/extension-registry/extension-manifest.hpp
+	src/services/extension-registry/extension-manifest.cpp
 
 	src/services/oauth/oauth-token-store.hpp
 	src/services/oauth/oauth-token-store.cpp
@@ -555,6 +557,9 @@ set(SRCS
 	src/extensions/vicinae/store/store-detail-view.cpp
 	src/extensions/vicinae/list-installed-extensions-view.hpp
 	src/extensions/vicinae/list-installed-extensions-view.cpp
+
+	src/extensions/file/search/search-files-view.hpp
+	src/extensions/file/search/search-files-view.cpp
 
 	src/services/raycast/raycast-store.cpp
 	src/services/extension-store/vicinae-store.cpp
@@ -706,6 +711,9 @@ if (UNIX AND NOT APPLE)
 		src/lib/wayland/seat.cpp
 		src/lib/wayland/virtual-keyboard.hpp
 		src/lib/wayland/virtual-keyboard.cpp
+
+		src/services/clipboard/data-control/data-control-clipboard-server.hpp
+		src/services/clipboard/data-control/data-control-clipboard-server.cpp
 	)
 
 	# ext-data-control
@@ -714,8 +722,6 @@ if (UNIX AND NOT APPLE)
 		src/ext-clip/data-control-client.cpp
 		src/ext-clip/data-device.cpp
 		src/ext-clip/data-offer.cpp
-		src/services/clipboard/ext/ext-clipboard-server.hpp
-		src/services/clipboard/ext/ext-clipboard-server.cpp
 	)
 
 	# wlr-data-control
@@ -724,8 +730,6 @@ if (UNIX AND NOT APPLE)
 		src/wlr-clip/data-control-client.cpp
 		src/wlr-clip/data-device.cpp
 		src/wlr-clip/data-offer.cpp
-		src/services/clipboard/wlr/wlr-clipboard-server.hpp
-		src/services/clipboard/wlr/wlr-clipboard-server.cpp
 	)
 	wayland_generate_protocol("${CMAKE_CURRENT_SOURCE_DIR}/protocols/wlr-data-control-unstable-v1.xml")
 endif()

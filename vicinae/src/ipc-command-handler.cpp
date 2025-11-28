@@ -3,6 +3,7 @@
 #include "proto/daemon.pb.h"
 #include <QDebug>
 #include "services/oauth/oauth-service.hpp"
+#include "services/clipboard/clipboard-service.hpp"
 #include "theme/theme-db.hpp"
 #include "root-search/extensions/extension-root-provider.hpp"
 #include "services/window-manager/window-manager.hpp"
@@ -26,6 +27,7 @@
 #include "theme.hpp"
 #include "ui/dmenu-view/dmenu-view.hpp"
 #include "ui/toast/toast.hpp"
+#include <csignal>
 #include "vicinae.hpp"
 
 PromiseLike<proto::ext::daemon::Response *>
@@ -164,7 +166,7 @@ tl::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
     return tl::unexpected("Unsupported url scheme " + url.scheme().toStdString());
   }
 
-  qDebug() << "goot deeplink" << url.toString();
+  qDebug() << "got deeplink" << url.toString();
 
   QUrlQuery query(url.query(QUrl::FullyDecoded));
 
@@ -177,10 +179,20 @@ tl::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
     path = "/" + pathParts.mid(1).join('/');
   }
 
+  // TODO: add a "quit" command to handle graceful shutdown (requires more work than you would expect)
+  if (command == "kill") {
+    qInfo() << "Killing vicinae server because a new instance was started";
+    QApplication::exit(1);
+    return {};
+  }
+
   if (command == "ping") { return {}; }
 
   if (command == "toggle") {
     m_ctx.navigation->toggleWindow();
+    if (query.hasQueryItem("fallbackText")) {
+      m_ctx.navigation->setSearchText(query.queryItemValue("fallbackText"));
+    }
     return {};
   }
 
@@ -223,6 +235,11 @@ tl::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
     }
 
     m_ctx.navigation->showWindow();
+
+    if (query.hasQueryItem("fallbackText")) {
+      m_ctx.navigation->setSearchText(query.queryItemValue("fallbackText"));
+    }
+
     return {};
   }
 
