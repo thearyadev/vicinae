@@ -67,7 +67,7 @@ std::unique_ptr<ActionPanelState> AppRootItem::newActionPanel(ApplicationContext
 
   if (!activeWindows.empty()) {
     auto focus = new FocusWindowAction(activeWindows.front());
-    if (defaultAction == "focus") {
+    if (defaultAction != "focus") {
       mainSection->addAction(new DefaultActionWrapper(uniqueId(), focus));
       mainSection->addAction(open);
     } else {
