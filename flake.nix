@@ -23,12 +23,12 @@
     in
     {
       packages = forEachPkgs (pkgs: {
-        default = pkgs.callPackage ./nix/vicinae.nix { };
+        default = pkgs.callPackage ./nix/vicinae.nix { gcc15Stdenv = pkgs.gcc15Stdenv; };
         nix-update-script = pkgs.writeShellScriptBin "nix-update-script" ''
-          OLD_API_DEPS_HASH=$(${pkgs.lib.getExe pkgs.nix} eval --raw .#packages.x86_64-linux.default.passthru.apiDeps.hash)
-          OLD_EXT_MAN_DEPS_HASH=$(${pkgs.lib.getExe pkgs.nix} eval --raw .#packages.x86_64-linux.default.passthru.extensionManagerDeps.hash)
+          OLD_API_DEPS_HASH=$(${pkgs.lib.getExe pkgs.nix} eval --raw .#packages.x86_64-linux.default.apiDeps.hash)
+          OLD_EXT_MAN_DEPS_HASH=$(${pkgs.lib.getExe pkgs.nix} eval --raw .#packages.x86_64-linux.default.extensionManagerDeps.hash)
 
-          cd typescript/api
+          cd src/typescript/api
           NEW_API_DEPS_HASH=$(${pkgs.lib.getExe pkgs.prefetch-npm-deps} package-lock.json)
           cd ../extension-manager
           NEW_EXT_MAN_DEPS_HASH=$(${pkgs.lib.getExe pkgs.prefetch-npm-deps} package-lock.json)
@@ -39,19 +39,15 @@
           [[ "$OLD_EXT_MAN_DEPS_HASH" == "$NEW_EXT_MAN_DEPS_HASH" ]] || { echo -e "\e[31mHash mismatch for extension-manager npm deps, please replace the value in vicinae.nix with '$NEW_EXT_MAN_DEPS_HASH'.\e[0m" >&2; exit 1;}
         '';
         mkVicinaeExtension = pkgs.callPackage ./nix/mkVicinaeExtension.nix { };
+        mkRayCastExtension = pkgs.callPackage ./nix/mkRayCastExtension.nix { };
       });
-      mkVicinaeExtension = forEachPkgs (
-        _:
-        lib.warn
-          "vicinae: accessing mkVicinaeExtension from flake top level is deprecated, use packages.<system>.mkVicinaeExtension instaed"
-          ({ pkgs, ... }@args: pkgs.callPackage ./nix/mkVicinaeExtension.nix { } args)
-      );
       devShells = forEachPkgs (pkgs: {
         default = pkgs.mkShell {
           # automatically pulls nativeBuildInputs + buildInputs
-          inputsFrom = [ (pkgs.callPackage ./nix/vicinae.nix { }) ];
-          buildInputs = [
-            pkgs.ccache
+          inputsFrom = [ (pkgs.callPackage ./nix/vicinae.nix { gcc15Stdenv = pkgs.gcc15Stdenv; }) ];
+          buildInputs = with pkgs; [
+            ccache
+            catch2_3
           ];
 
           packages = with pkgs; [
@@ -61,8 +57,9 @@
         };
       });
       overlays.default = final: prev: {
-        vicinae = prev.callPackage ./nix/vicinae.nix { };
+        vicinae = final.callPackage ./nix/vicinae.nix { };
         mkVicinaeExtension = prev.callPackage ./nix/mkVicinaeExtension.nix { };
+        mkRayCastExtension = prev.callPackage ./nix/mkRayCastExtension.nix { };
       };
       homeManagerModules.default = import ./nix/module.nix self;
     };

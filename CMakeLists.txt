@@ -1,10 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 set(PROJECT_NAME vicinae)
-set(CMAKE_CXX_STANDARD 23)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
 project(${PROJECT_NAME} VERSION 1.0.0 LANGUAGES C CXX)
+
+set(LIB_NAMESPACE "vicinae")
 
 if (QT_DIR)
 	set(CMAKE_PREFIX_PATH ${QT_DIR} ${CMAKE_PREFIX_PATH})
@@ -12,9 +11,16 @@ if (QT_DIR)
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
+include(FetchContent)
+include(GNUInstallDirs)
+include(Git)
+include(Utils)
 
 # Viciane build configuration options
 
+option(BUILD_TESTS "Build test suites for various vicinae components" OFF)
 option(IGNORE_CCACHE "Always ignore ccache even if it is installed" OFF)
 option(LTO "Enable Link Time Optimization (LTO). This will result in better performance, but greatly increased compile time. (Gentoo chads can't live without this)" OFF)
 option(NOSTRIP "Never strip debug symbols from the binary, even in release mode. Note that symbols are never stripped for debug releases." OFF)
@@ -28,22 +34,30 @@ option(
 
 option(WAYLAND_LAYER_SHELL "Enable support for the layer shell Wayland protocol" ON)
 option(TYPESCRIPT_EXTENSIONS "Enable support for extensions built with React/Typescript (no browser involved)" ON)
-
 option(PREFER_STATIC_LIBS "When available, link to a library statically instead of dynamically" OFF)
 option(USE_SYSTEM_PROTOBUF "Use system protobuf instead of building it from source" ON)
 option(USE_SYSTEM_ABSEIL "Use system abseil (libabsl) instead of building it from source" ON)
 option(USE_SYSTEM_CMARK_GFM "Use system cmark-gfm (github's fork of cmark) instead of building it from source" ON)
-option(USE_SYSTEM_MINIZIP "Use system minizip instead of building it from source" ON)
 option(USE_SYSTEM_LAYER_SHELL "Use system qt layer shell instead of building it from source" ON)
+option(USE_SYSTEM_GLAZE "Use system glaze instead of fetching it. This is a header only library so only required at build time" OFF)
 option(USE_SYSTEM_QT_KEYCHAIN "Use system qt-keychain instead of building it from source. Note: still depends on system libsecret." ON)
-option(USE_SYSTEM_RAPIDFUZZ "Use system version of the rapidfuzz-cpp header only library" ON)
 option(LIBQALCULATE_BACKEND "Compile in support for the Qalculate! calculator backend" ON)
-option(USE_PRECOMPILED_HEADERS "Use precompiled headers to speed up compilation" ON)
+option(ENABLE_SANITIZERS "Enable ASan + UBSan for debug builds" OFF)
+option(ENABLE_PREVIEW_FEATURES "Enable preview features that are not yet ready for global release" OFF)
 
-option(BUILD_TESTS "Build all vicinae tests" OFF)
+# disabled for now, as it seems to be incompatible with ccache, and as such slows us down more than anything
+option(USE_PRECOMPILED_HEADERS "Use precompiled headers to speed up compilation" OFF)
 
-if (BUILD_TESTS)
-	add_subdirectory(tests)
+set(LIB_DIR "${CMAKE_SOURCE_DIR}/src/lib")
+set(EXTRA_DIR "${CMAKE_SOURCE_DIR}/extra")
+set(THEME_DIR "${EXTRA_DIR}/themes")
+set(VICINAE_LIBEXEC_PATH ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBEXECDIR}/vicinae)
+set(VICINAE_LIBEXEC_DIR ${CMAKE_INSTALL_LIBEXECDIR}/vicinae)
+
+include(Glaze)
+
+if (NOT USE_SYSTEM_GLAZE)
+	checkout_glaze()
 endif()
 
 if (APPLE)
@@ -51,10 +65,19 @@ if (APPLE)
 	set(WLR_DATA_CONTROL OFF)
 endif()
 
-if (UNIX AND NOT APPLE)
-	set(XDGPP_INSTALL OFF CACHE BOOL "Don't install xdgpp when building vicinae" FORCE)
-	add_subdirectory("./lib/xdgpp")
-endif()
+include_directories(
+    ${CMAKE_BINARY_DIR}/generated  # For version.h
+)
+
+add_subdirectory(src/browser-extension)
+add_subdirectory(src/snippet)
+add_subdirectory(${LIB_DIR}/script-command)
+add_subdirectory(${LIB_DIR}/emoji)
+add_subdirectory(${LIB_DIR}/xdgpp)
+add_subdirectory(${LIB_DIR}/vicinae-ipc)
+add_subdirectory(${LIB_DIR}/common)
+
+set(PROTO_DIR ${CMAKE_SOURCE_DIR}/src/proto)
 
 if (USE_SYSTEM_PROTOBUF)
 	set(USE_SYSTEM_ABSEIL ON)
@@ -68,15 +91,10 @@ if (PREFER_STATIC_LIBS)
 	set(USE_SYSTEM_PROTOBUF OFF)
 	set(USE_SYSTEM_ABSEIL OFF)
 	set(USE_SYSTEM_CMARK_GFM OFF)
-	set(USE_SYSTEM_MINIZIP OFF)
 	set(USE_SYSTEM_LAYER_SHELL OFF)
 	set(USE_SYSTEM_QT_KEYCHAIN OFF)
-	set(USE_SYSTEM_RAPIDFUZZ OFF)
 	set(LIBQALCULATE_BACKEND OFF)
 endif()
-
-include(Git)
-include(Utils)
 
 
 if (NOT DEFINED VICINAE_GIT_TAG)
@@ -108,14 +126,6 @@ configure_file(
 set(CMARK_LIBRARY "cmark-gfm")
 set(CMARK_EXT_LIBRARY "cmark-gfm-extensions")
 
-if (NOT USE_SYSTEM_RAPIDFUZZ)
-	include(RapidFuzz)
-	checkout_rapidfuzz()
-	# there is probably a better way, but the headers are not part of the build output
-	# so cmake won't find them
-	include_directories(${CMAKE_CURRENT_BINARY_DIR}/_deps/rapidfuzz-src/)
-endif()
-
 if (NOT USE_SYSTEM_QT_KEYCHAIN)
 	include(QtKeychain)
 	checkout_qt_keychain()
@@ -124,11 +134,6 @@ endif()
 if (NOT USE_SYSTEM_LAYER_SHELL)
 	include(QtLayerShell)
 	checkout_layer_shell_qt()
-endif()
-
-if (NOT USE_SYSTEM_MINIZIP)
-	include(Minizip)
-	checkout_minizip()
 endif()
 
 if (NOT USE_SYSTEM_CMARK_GFM)
@@ -149,13 +154,19 @@ if (NOT USE_SYSTEM_PROTOBUF)
 	set(COMMON_PROTO_DIR ${CMAKE_CURRENT_BINARY_DIR}/_deps/protobuf-src/src)
 endif()
 
+find_package(glaze)
+
 set(CMAKE_FIND_PACKAGE_PREFER_CONFIG TRUE)
 find_package(Protobuf)
 unset(CMAKE_FIND_PACKAGE_PREFER_CONFIG)
 
 if (TYPESCRIPT_EXTENSIONS)
-	add_subdirectory(typescript)
+	add_subdirectory(src/typescript)
 	add_compile_definitions(HAS_TYPESCRIPT_EXTENSIONS=1)
+endif()
+
+if (ENABLE_PREVIEW_FEATURES)
+	add_compile_definitions(ENABLE_PREVIEW_FEATURES=1)
 endif()
 
 if(NOT CMAKE_BUILD_TYPE)
@@ -165,12 +176,23 @@ endif()
 message(STATUS "Configured build type ${CMAKE_BUILD_TYPE}")
 
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3")
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_RELEASE} -g3 -O0")
+
+if (ENABLE_SANITIZERS AND CMAKE_BUILD_TYPE MATCHES "Debug")
+	message(STATUS "Sanitizers enabled (ASan + UBSan)")
+	# glaze has issues with ubsan+variants
+	#add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+	add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+	add_link_options(-fsanitize=address)
+	add_compile_definitions(DEBUG=1)
+endif()
 
 set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release ReleaseHost)
 
-if (NOT NOSTRIP AND NOT ${CMAKE_BUILD_TYPE} MATCHES "Debug")
-	#set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -s")
-	message(STATUS "Built binaries will be stripped")
+if (${CMAKE_BUILD_TYPE} MATCHES "Debug")
+	add_compile_definitions(DEBUG=1)
+else()
+	add_compile_definitions(DEBUG=0)
 endif()
 
 set(BUILD_INFO "${CXX_COMPILER_NAME} ${CMAKE_CXX_COMPILER_VERSION} - ${CMAKE_BUILD_TYPE}")
@@ -200,25 +222,13 @@ if (CCACHE AND NOT IGNORE_CCACHE)
 	set(CMAKE_CXX_COMPILER_LAUNCHER "ccache")
 endif()
 
-set(WLR_CLIP_BIN "vicinae-wlr-clip")
-set(LOCAL_WLR_CLIP_BIN "${CMAKE_BINARY_DIR}/wlr-clip/${WLR_CLIP_BIN}")
-
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-	add_compile_options(-g3)
-elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
-elseif(CMAKE_BUILD_TYPE STREQUAL "ReleaseHost")
-	add_compile_options(-march=native)
-endif()
-
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-	message(STATUS "Debug build, setting wlr-clip bin to ${LOCAL_WLR_CLIP_BIN}")
-	add_compile_definitions(WLR_CLIP_BIN="${LOCAL_WLR_CLIP_BIN}")
-else()
-	add_compile_definitions(WLR_CLIP_BIN="${WLR_CLIP_BIN}")
-endif()
-
 add_compile_definitions(BUILD_INFO="${BUILD_INFO}")
-add_subdirectory(vicinae)
+add_subdirectory(src/server)
+add_subdirectory(src/cli)
+
+if (UNIX AND NOT APPLE)
+	add_subdirectory(src/data-control-server)
+endif()
 
 set(INSTALL_SHARE ${CMAKE_INSTALL_PREFIX}/share)
 set(VICINAE_INSTALL_SHARE ${INSTALL_SHARE}/vicinae)
@@ -242,6 +252,3 @@ if (UNIX AND NOT APPLE)
 	make_directory(${SYSTEMD_USER_DIR})
 	install(FILES ./extra/vicinae.service DESTINATION ${SYSTEMD_USER_DIR})
 endif()
-
-
-

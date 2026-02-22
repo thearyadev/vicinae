@@ -1,6 +1,5 @@
 .cache
 /build
-/src
 .tmp
 extension-manager/runtime/node_modules
 /cmake-build-debug
@@ -8,8 +7,6 @@ extension-manager/runtime/node_modules
 /vgcore*
 .env
 .direnv
-
-vicinae/assets/extension-runtime.js
 
 *.tar.gz
 !extra/icons/vicinae-icon-theme.tar.gz
@@ -26,3 +23,5 @@ __cmake*
 /result
 
 CLAUDE.md
+
+heaptrack*

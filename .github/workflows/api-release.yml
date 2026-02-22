@@ -15,7 +15,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, prod]
     defaults:
       run:
-        working-directory: ./typescript/api
+        working-directory: ./src/typescript/api
     steps:
       - uses: actions/checkout@v4
 
@@ -43,5 +43,5 @@ jobs:
       - uses: JS-DevTools/npm-publish@19c28f1ef146469e409470805ea4279d47c3d35c
         with:
           token: ${{ secrets.NPM_TOKEN }}
-          package: ./typescript/api
+          package: ./src/typescript/api
 
