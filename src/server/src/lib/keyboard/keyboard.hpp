@@ -1,12 +1,18 @@
 #pragma once
 // We use our own shortcut stuff by design, instead of using QShortcut and the likes.
-#include <qevent.h>
-#include <qlogging.h>
+#include <optional>
+#include <vector>
+#include <QStringView>
+#include <QVariantList>
 #include <qnamespace.h>
 #include "keybind.hpp"
 
+class QKeyEvent;
+
 namespace Keyboard {
 std::optional<QString> stringForKey(Qt::Key key);
+std::optional<Qt::Key> keyFromString(QStringView key);
+std::optional<Qt::KeyboardModifier> modifierFromString(QStringView modifier);
 
 class Shortcut {
 public:
@@ -17,12 +23,11 @@ public:
 
   static Shortcut shiftPaste() { return osPaste().shifted(); }
   static Shortcut fromString(const QString &str) { return str; }
-  static Shortcut fromKeyPress(const QKeyEvent &event) { return Shortcut(&event); }
+  static Shortcut fromKeyPress(const QKeyEvent &event);
 
   Shortcut() : m_isValid(false) {}
   Shortcut(Qt::Key key, Qt::KeyboardModifiers mods = {}) : m_key(key), m_modifiers(mods), m_isValid(true) {}
-  Shortcut(const QKeyEvent *event)
-      : m_key(static_cast<Qt::Key>(event->key())), m_modifiers(event->modifiers()), m_isValid(true) {}
+  Shortcut(const QKeyEvent *event);
 
   /**
    * Construct shortcut from a named keybind, which are application keybinds that are configurable by the user
@@ -39,12 +44,6 @@ public:
   bool isValid() const { return m_isValid; }
   operator bool() const { return isValid(); }
 
-  /**
-   * All unique keys in the shortcut, including modifiers.
-   * For instance, ctrl+shift+a returns {Qt::Key_Control, Qt::Key_Shift, Qt::Key_A}
-   */
-  std::vector<Qt::Key> allKeys() const;
-  std::vector<Qt::Key> modKeys() const;
   std::vector<Qt::KeyboardModifier> modList() const;
 
   bool isValidKey() const { return stringForKey(m_key).has_value(); }
@@ -55,6 +54,12 @@ public:
   // It can be parsed back using Shortcut::fromString
   // e.g meta+shift+A
   QString toString() const;
+
+  QString toBindingSequence() const;
+
+  // Human-readable display form for UI badges (e.g. "Ctrl+B", "Shift+Enter")
+  QString toDisplayString() const;
+  QVariantList toDisplayTokens() const;
   Shortcut &modded(Qt::KeyboardModifier mod);
 
   bool equals(const Shortcut &other, bool ignoreNumpadMod = true) const;

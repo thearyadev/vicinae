@@ -35,7 +35,7 @@ QColor ThemeFile::resolve(SemanticColor color) const {
                                auto color = resolve(ref.color);
                                if (ref.opacity) {
                                  auto bg = resolve(SemanticColor::Background);
-                                 float a = std::clamp(static_cast<float>(*ref.opacity), 0.0f, 1.0f);
+                                 float const a = std::clamp(static_cast<float>(*ref.opacity), 0.0f, 1.0f);
                                  color = QColor(qRound(color.red() * a + bg.red() * (1.0f - a)),
                                                 qRound(color.green() * a + bg.green() * (1.0f - a)),
                                                 qRound(color.blue() * a + bg.blue() * (1.0f - a)));
@@ -131,6 +131,8 @@ QColor ThemeFile::deriveSemantic(SemanticColor color) const {
     return resolve(SemanticColor::ListItemSelectionForeground);
   case SemanticColor::ListItemSecondarySelectionBackground:
     return resolve(SemanticColor::ListItemSelectionBackground);
+  case SemanticColor::ListItemSecondaryHoverForeground:
+    return resolve(SemanticColor::ListItemSecondarySelectionForeground);
   case SemanticColor::ListItemSecondaryHoverBackground:
     return isDark() ? resolve(SemanticColor::ListItemSecondarySelectionBackground).darker(110)
                     : resolve(SemanticColor::ListItemSecondarySelectionBackground).lighter(110);
@@ -147,7 +149,7 @@ QColor ThemeFile::deriveSemantic(SemanticColor color) const {
     return resolve(SemanticColor::Accent);
 
   case SemanticColor::ScrollBarBackground:
-    return resolve(SemanticColor::ListItemSelectionBackground);
+    return withAlphaF(resolve(SemanticColor::Foreground), 0.25);
   case SemanticColor::SecondaryScrollBarBackground:
     return resolve(SemanticColor::ScrollBarBackground);
 

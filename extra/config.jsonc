@@ -5,7 +5,19 @@
 	// Note that values defined in the main configuration file always take precedence over imported
 	// files.
 	// Relative paths are accepted, and are relative to the configuration directory in which the importing configuration file is located.
-	"imports": [],
+	"imports": [
+		// "./keybinds.json"
+		// "./providers.json"
+	],
+
+	// Choose what telemetry to sent to the vicinae central server
+	// We never send personally identifiable information
+	// More details available at https://docs.vicinae.com/telemetry
+	"telemetry": {
+		// Sends system information such as desktop environment, vicinae version, etc...
+		// Only sent once at startup every 24 hours
+		"system_info": true
+	},
 
 	// Whether root search should also search files directly.
 	// File search is performed asynchrounously: files may take an instant to appear after a query is entered.
@@ -14,9 +26,15 @@
 	// rich content preview. This should be more than enough for most users.
 	"search_files_in_root": false,
 
+	// activate list and grid items with only one click
+	"activate_on_single_click": false,
+
 	// What vicinae should do when the "escape" key is pressed
 	// Supports "navigate_back" or "close_window"
 	"escape_key_behavior": "navigate_back",
+
+	// navigate back when backspace is pressed on an empty search input
+	"pop_on_backspace": true,
 
 	// If the layer shell protocol is used to position the window and the keyboard interactivity is
 	// set to "exclusive" (the default) then this setting will have no effect. Either switch to "on_demand" interactivity
@@ -41,6 +59,11 @@
 	"keybinding": "default",
 
 	"font": {
+		// Text rendering backend used by Qt Quick text.
+		// "native": uses platform/fontconfig rendering (can have better dark-mode weight/clarity)
+		// "qt": uses Qt distance-field rendering (typically better performance for heavy scaling/animation)
+		"rendering": "qt",
+
 		// The font family to use for the general vicinae UI.
 		// "auto" (recommended): uses the bundled Inter font
 		// "system": uses the system/platform default font
@@ -88,7 +111,7 @@
 		"client_side_decorations": {
 			"enabled": true,
 			"rounding": 10,
-			"border_width": 2
+			"border_width": 1
 		},
 
 		// In compact mode, vicinae only shows a search bar in the root search if no query is entered, only expanding to its full size when searching.

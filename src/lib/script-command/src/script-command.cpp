@@ -119,18 +119,18 @@ static std::optional<KV> parseKV(std::string_view line) {
 
   if (pos == std::string::npos) return {};
 
-  std::string_view scope = line.substr(i, pos - i);
+  const std::string_view scope = line.substr(i, pos - i);
 
   if (!std::ranges::contains(scopes, scope)) { return {}; }
 
-  int keyStart = pos + 1;
+  const int keyStart = pos + 1;
   int keyEnd = keyStart;
 
   while (keyEnd < line.size() && !std::isspace(line.at(keyEnd))) {
     ++keyEnd;
   }
 
-  std::string_view key = line.substr(keyStart, keyEnd - keyStart);
+  const std::string_view key = line.substr(keyStart, keyEnd - keyStart);
 
   int valueStart = keyEnd;
 
@@ -138,7 +138,7 @@ static std::optional<KV> parseKV(std::string_view line) {
     ++valueStart;
   }
 
-  std::string_view value = line.substr(valueStart);
+  const std::string_view value = line.substr(valueStart);
 
   return KV(scope, key, value);
 }
@@ -166,7 +166,8 @@ static std::expected<std::uint64_t, std::string> parseTimeToSeconds(std::string_
   if (unitPos == 0) { return std::unexpected(std::format("Invalid time format: {}", timeStr)); }
 
   std::uint64_t value = 0;
-  auto result = std::from_chars(timeStr.data(), timeStr.data() + unitPos, value);
+  const auto numPart = timeStr.substr(0, unitPos);
+  auto result = std::from_chars(numPart.data(), numPart.data() + numPart.size(), value);
   if (result.ec != std::errc{}) {
     return std::unexpected(std::format("Invalid number in time string: {}", timeStr));
   }
@@ -269,6 +270,17 @@ std::expected<ScriptCommand, std::string> ScriptCommand::parse(std::string_view 
           return std::unexpected(std::format("Failed to parse exec: {}", glz::format_error(error)));
         }
       }
+      if (kv->k == "terminal") {
+        if (kv->scope != "@vicinae") {
+          return std::unexpected("terminal field is only supported in @vicinae scope");
+        }
+        TerminalOptions termOpts;
+        std::string buf{kv->v};
+        if (auto error = glz::read_json(termOpts, buf)) {
+          return std::unexpected(std::format("Failed to parse terminal: {}", glz::format_error(error)));
+        }
+        data.terminal = std::move(termOpts);
+      }
 
       for (const char *argKey : {"argument1", "argument2", "argument3"}) {
         if (kv->k == argKey) {
@@ -307,7 +319,7 @@ std::expected<ScriptCommand, std::string> ScriptCommand::parse(std::ifstream &if
     std::string_view s{line};
     trim(s);
 
-    bool startsWithComment =
+    const bool startsWithComment =
         std::ranges::any_of(inlineCommentMarkers, [&](const char *marker) { return s.starts_with(marker); });
 
     buf.append(s);

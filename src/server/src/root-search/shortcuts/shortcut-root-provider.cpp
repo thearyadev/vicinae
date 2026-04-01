@@ -16,6 +16,7 @@ std::unique_ptr<ActionPanelState> RootShortcutItem::newActionPanel(ApplicationCo
                                                                    const RootItemMetadata &metadata) const {
   auto panel = std::make_unique<ListActionPanelState>();
   auto mainSection = panel->createSection();
+  auto manageSection = panel->createSection();
   auto itemSection = panel->createSection();
   auto dangerSection = panel->createSection();
 
@@ -31,8 +32,9 @@ std::unique_ptr<ActionPanelState> RootShortcutItem::newActionPanel(ApplicationCo
 
   panel->setTitle(m_link->name());
   mainSection->addAction(new DefaultActionWrapper(uniqueId(), open));
-  mainSection->addAction(edit);
-  mainSection->addAction(duplicate);
+
+  manageSection->addAction(edit);
+  manageSection->addAction(duplicate);
 
   for (const auto action : RootSearchActionGenerator::generateActions(*this, metadata)) {
     itemSection->addAction(action);
@@ -64,7 +66,7 @@ EntrypointId RootShortcutItem::uniqueId() const {
   return EntrypointId{"shortcuts", m_link->id().toStdString()};
 }
 
-QString RootShortcutItem::displayName() const { return m_link->name(); }
+QString RootShortcutItem::title() const { return m_link->name(); }
 
 double RootShortcutItem::baseScoreWeight() const { return 1.4; }
 
@@ -112,7 +114,7 @@ std::vector<std::shared_ptr<RootItem>> ShortcutRootProvider::loadItems() const {
 QString ShortcutRootProvider::displayName() const { return "Shortcuts"; }
 
 ImageURL ShortcutRootProvider::icon() const {
-  auto icon = ImageURL::builtin("link");
+  auto icon = ImageURL::builtin("bolt");
 
   icon.setBackgroundTint(Omnicast::ACCENT_COLOR);
 

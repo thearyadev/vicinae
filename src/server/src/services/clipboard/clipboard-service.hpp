@@ -1,12 +1,9 @@
 #pragma once
 #include "common.hpp"
 #include "extensions/wm/wm-extension.hpp"
-#include "services/app-service/app-service.hpp"
 #include "services/clipboard/clipboard-db.hpp"
 #include "services/clipboard/clipboard-encrypter.hpp"
 #include "services/clipboard/clipboard-server.hpp"
-#include "services/window-manager/abstract-window-manager.hpp"
-#include "services/window-manager/window-manager.hpp"
 #include <QString>
 #include <expected>
 #include <filesystem>
@@ -22,7 +19,8 @@
 #include <qt6keychain/keychain.h>
 
 namespace Clipboard {
-static const char *CONCEALED_MIME_TYPE = "vicinae/concealed";
+[[maybe_unused]] static const char *CONCEALED_MIME_TYPE = "vicinae/concealed";
+
 using NoData = std::monostate;
 struct File {
   std::filesystem::path path;
@@ -51,22 +49,6 @@ struct ReadContent {
   std::optional<QString> file;
 };
 
-static Content fromJson(const QJsonObject &obj) {
-  if (obj.contains("path")) { return File{.path = obj.value("path").toString().toStdString()}; }
-  if (obj.contains("html")) {
-    Html html;
-
-    html.html = obj.value("html").toString();
-
-    if (obj.contains("text")) { html.text = obj.value("text").toString(); }
-
-    return html;
-  }
-  if (obj.contains("text")) { return Text{obj.value("text").toString()}; }
-
-  return Text{};
-}
-
 }; // namespace Clipboard
 
 class ClipboardService : public QObject, public NonCopyable {
@@ -91,7 +73,7 @@ public:
     DecryptionFailed,
   };
 
-  ClipboardService(const std::filesystem::path &path, WindowManager &wm, AppService &appDb);
+  ClipboardService(const std::filesystem::path &path);
 
   static QString readText();
   static Clipboard::ReadContent readContent();
@@ -104,7 +86,7 @@ public:
   std::expected<QByteArray, OfferDecryptionError> getMainOfferData(const QString &selectionId) const;
   AbstractClipboardServer *clipboardServer() const;
   bool removeSelection(const QString &id);
-  bool setPinned(const QString id, bool pinned);
+  bool setPinned(const QString &id, bool pinned);
   QFuture<PaginatedResponse<ClipboardHistoryEntry>> listAll(int limit = 100, int offset = 0,
                                                             const ClipboardListSettings &opts = {}) const;
   bool copyText(const QString &text, const Clipboard::CopyOptions &options = {.concealed = true});
@@ -113,8 +95,6 @@ public:
                 const Clipboard::CopyOptions &options = {.concealed = false});
   bool copyContent(const Clipboard::Content &content,
                    const Clipboard::CopyOptions options = {.concealed = false});
-  bool pasteContent(const Clipboard::Content &content,
-                    const Clipboard::CopyOptions options = {.concealed = false});
   void setRecordAllOffers(bool value);
   bool clear();
   void saveSelection(ClipboardSelection selection);
@@ -165,9 +145,6 @@ private:
   decryptOffer(const QByteArray &data, ClipboardEncryptionType type) const;
 
   static ClipboardOfferKind getKind(const ClipboardDataOffer &offer);
-
-  WindowManager &m_wm;
-  AppService &m_appDb;
 
   bool m_recordAllOffers = true;
   bool m_monitoring = false;

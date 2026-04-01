@@ -1,7 +1,6 @@
 #pragma once
 #include "argument.hpp"
 #include "common.hpp"
-#include "vicinae.hpp"
 #include "preference.hpp"
 #include "ui/action-pannel/action.hpp"
 #include <endian.h>
@@ -10,7 +9,7 @@
 #include "common/entrypoint.hpp"
 
 class View;
-class LaunchProps;
+struct LaunchProps;
 
 class AbstractCmd {
 public:
@@ -29,7 +28,7 @@ public:
   virtual QString repositoryDisplayName() const { return ""; }
   virtual QString repositoryName() const { return ""; }
   virtual bool isFallback() const { return false; }
-  virtual void preferenceValuesChanged(const QJsonObject &value) const {}
+  virtual void preferenceValuesChanged(const QJsonObject &) const {}
   virtual bool isInternal() const { return false; }
 
   /**
@@ -42,21 +41,13 @@ public:
 
   virtual bool isDefaultDisabled() const { return false; }
 
-  QString deeplink() const {
-    return QString("%1://extensions/%2/%3/%4")
-        .arg(Omnicast::APP_SCHEME)
-        .arg(author())
-        .arg(repositoryName())
-        .arg(commandId());
-  }
-
   virtual QString extensionId() const = 0;
   virtual QString commandId() const = 0;
 
   bool isView() const { return mode() == CommandModeView; }
   bool isNoView() const { return mode() == CommandModeNoView; }
 
-  virtual CommandContext *createContext(const std::shared_ptr<AbstractCmd> &command) const { return nullptr; }
+  virtual CommandContext *createContext(const std::shared_ptr<AbstractCmd> &) const { return nullptr; }
 };
 
 class AbstractCommandRepository {
@@ -69,14 +60,13 @@ public:
   virtual std::vector<std::shared_ptr<AbstractCmd>> commands() const = 0;
   virtual ImageURL iconUrl() const = 0;
   virtual std::vector<Preference> preferences() const { return {}; }
-  virtual QWidget *settingsDetail() const { return new QWidget; }
 
   /**
    * Triggered the first time the provider is registered
    */
-  virtual void initialized(const QJsonObject &preferences) const {}
+  virtual void initialized(const QJsonObject &) const {}
 
-  virtual void preferenceValuesChanged(const QJsonObject &value) const {}
+  virtual void preferenceValuesChanged(const QJsonObject &) const {}
 
   virtual ~AbstractCommandRepository() = default;
 };
@@ -89,12 +79,12 @@ class CommandContext : public QObject {
 
 public:
   const AbstractCmd *command() const { return _cmd.get(); }
-  virtual void onActionExecuted(AbstractAction *action) {}
+  virtual void onActionExecuted(AbstractAction *) {}
 
   void setContext(ApplicationContext *ctx) { m_ctx = ctx; }
   ApplicationContext *context() const { return m_ctx; }
 
-  virtual void load(const LaunchProps &props) {}
+  virtual void load(const LaunchProps &) {}
   virtual void unload() {};
 
   CommandContext(const std::shared_ptr<AbstractCmd> &command) : _cmd(command) {}

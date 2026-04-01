@@ -141,7 +141,7 @@ TEST_CASE("handle copy", GROUP) {
 Name=Test
 Comment=Some comment
   )");
-  auto copy = file;
+  const auto &copy = file;
 
   REQUIRE(copy.name() == file.name());
 }
@@ -640,9 +640,32 @@ Exec=ghostty
   REQUIRE(file.isValid());
   auto exec = file.terminalExec();
   REQUIRE(exec.has_value());
+  REQUIRE(exec->exec.has_value());
   REQUIRE(exec->exec == "-e");
+  REQUIRE(exec->title.has_value());
   REQUIRE(exec->title == "--title=");
+  REQUIRE(exec->appId.has_value());
   REQUIRE(exec->appId == "--class=");
+  REQUIRE(exec->dir.has_value());
   REQUIRE(exec->dir == "--working-directory=");
+  REQUIRE(exec->hold.has_value());
   REQUIRE(exec->hold == "--wait-after-command");
+}
+
+TEST_CASE("Unlocalized name") {
+  auto file = DesktopEntry::fromData(R"(
+[Desktop Entry]
+Name=wechat
+Name[zh_CN]=微信
+Exec=/usr/bin/wechat %U
+Icon=/usr/share/icons/hicolor/256x256/apps/wechat.png
+Type=Application
+Comment=Wechat Desktop
+Comment[zh_CN]=微信桌面版
+)",
+                                     {.locale = Locale("zh_CN")});
+  REQUIRE(file.isValid());
+  REQUIRE(file.unlocalizedName());
+  REQUIRE(file.unlocalizedName().value() == "wechat");
+  REQUIRE(file.name() == "微信");
 }

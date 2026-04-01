@@ -14,7 +14,7 @@
 using CalculatorResult = QalculateBackend::CalculatorResult;
 using CalculatorError = QalculateBackend::CalculatorError;
 
-QalculateBackend::QalculateBackend() {}
+QalculateBackend::QalculateBackend() = default;
 
 bool QalculateBackend::isActivatable() const {
   /**
@@ -34,19 +34,19 @@ bool QalculateBackend::start() {
 }
 
 std::expected<CalculatorResult, CalculatorError> QalculateBackend::compute(const QString &question) const {
-  QString expression = preprocessQuestion(question);
-  std::string localizedExpression = CALCULATOR->unlocalizeExpression(expression.toStdString());
+  QString const expression = preprocessQuestion(question);
+  std::string const localizedExpression = CALCULATOR->unlocalizeExpression(expression.toStdString());
   std::string res;
   res = CALCULATOR->calculateAndPrint(localizedExpression, 10000, m_evalOpts, m_printOpts);
 
-  MathStructure in = CALCULATOR->parse(localizedExpression);
-  MathStructure result = CALCULATOR->parse(res);
+  MathStructure const in = CALCULATOR->parse(localizedExpression);
+  MathStructure const result = CALCULATOR->parse(res);
   if (result.containsUnknowns()) { return std::unexpected(CalculatorError("Unknown component in question")); }
 
   bool error = false;
 
   for (auto msg = CALCULATOR->message(); msg; msg = CALCULATOR->nextMessage()) {
-    error = true;
+    if (msg->type() == MESSAGE_ERROR) { error = true; }
   }
 
   if (error) return std::unexpected(CalculatorError("Calculation error"));
@@ -109,6 +109,7 @@ void QalculateBackend::initializeCalculator() {
   m_printOpts.interval_display = INTERVAL_DISPLAY_SIGNIFICANT_DIGITS;
   m_printOpts.use_unicode_signs = true;
   m_printOpts.base_display = BASE_DISPLAY_ALTERNATIVE;
+  m_printOpts.number_fraction_format = FRACTION_DECIMAL;
 
   m_calc.reset();
   m_calc.loadGlobalDefinitions();
@@ -123,7 +124,7 @@ void QalculateBackend::initializeCalculator() {
 std::optional<std::string> QalculateBackend::getUnitDisplayName(const MathStructure &s,
                                                                 std::string_view prefix) {
   if (prefix.empty() && s.prefix()) {
-    std::string_view prefix = s.prefix()->preferredDisplayName().name;
+    std::string_view const prefix = s.prefix()->preferredDisplayName().name;
     if (!prefix.empty()) { return getUnitDisplayName(s, prefix); }
   }
 
@@ -131,7 +132,7 @@ std::optional<std::string> QalculateBackend::getUnitDisplayName(const MathStruct
     return std::format("{}{}", prefix, unit->preferredDisplayName(false, false, true, false).name);
   }
 
-  for (int i = 0; i != s.size(); ++i) {
+  for (size_t i = 0; i != s.size(); ++i) {
     if (auto unit = getUnitDisplayName(s[i], prefix)) { return unit; }
   }
 

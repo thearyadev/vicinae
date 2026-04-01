@@ -4,6 +4,50 @@ import { useState } from "react";
 // Examples taken from:
 // https://developers.raycast.com/api-reference/user-interface/form
 
+const useCount = () => {
+	const [count, setCount] = useState(0);
+
+	return {
+		count,
+		increment: () => setCount((count) => count + 1),
+	};
+};
+
+const ManagedSingleFilePicker = () => {
+	const { count, increment } = useCount();
+	const paths = [`/path/to/file/${count}`];
+
+	return (
+		<Form.FilePicker
+			id="managedSingleFile"
+			title="(managed single file)"
+			value={paths}
+			onChange={(paths) => {
+				console.log(`managed form change, not updating`, paths);
+				increment();
+			}}
+		/>
+	);
+};
+
+const ManagedMultipleFilePicker = () => {
+	const { count, increment } = useCount();
+	const paths = [`/path/to/${count}`, `/other/path/to/${count}`];
+
+	return (
+		<Form.FilePicker
+			id="managedSingleFile"
+			title="(managed multiple file)"
+			value={paths}
+			allowMultipleSelection
+			onChange={(paths) => {
+				console.log(`managed form change, not updating`, paths);
+				increment();
+			}}
+		/>
+	);
+};
+
 export default function FormElements() {
 	const [text, setText] = useState("");
 	const [checkbox, setCheckbox] = useState(true);
@@ -12,7 +56,12 @@ export default function FormElements() {
 		<Form
 			actions={
 				<ActionPanel>
-					<Action title="Submit" onAction={console.log} />
+					<Action.SubmitForm
+						onSubmit={(values) => {
+							console.log(values);
+							showToast(Toast.Style.Success, "submitted!");
+						}}
+					/>
 				</ActionPanel>
 			}
 			navigationTitle="Form Elements"
@@ -27,18 +76,24 @@ export default function FormElements() {
 			<Form.TextField
 				id="name"
 				title="TextField"
+				placeholder="Name here..."
 				defaultValue="Steve"
 				value={text}
 				onChange={setText}
 			/>
 
 			{/* PasswordField */}
-			<Form.PasswordField id="password" title="PasswordField" />
+			<Form.PasswordField
+				id="password"
+				title="PasswordField"
+				placeholder="Password here..."
+			/>
 
 			{/* TextArea */}
 			<Form.TextArea
 				id="description"
 				title="TextArea"
+				placeholder="Description here..."
 				value={text}
 				onChange={setText}
 			/>
@@ -86,6 +141,23 @@ export default function FormElements() {
 				/>
 			</Form.Dropdown>
 
+			<Form.Dropdown
+				id="emoji"
+				title="Dropdown"
+				placeholder="No default value"
+				onChange={(value) =>
+					showToast(Toast.Style.Success, `Selected ${value}`)
+				}
+			>
+				<Form.Dropdown.Item value="poop" title="Pile of poop" icon="💩" />
+				<Form.Dropdown.Item value="rocket" title="Rocket" icon="🚀" />
+				<Form.Dropdown.Item
+					value="lol"
+					title="Rolling on the floor laughing face"
+					icon="🤣"
+				/>
+			</Form.Dropdown>
+
 			{/* Dropdown with sections */}
 			<Form.Dropdown id="food" title="Dropdown with sections">
 				<Form.Dropdown.Section title="Fruits">
@@ -115,7 +187,7 @@ export default function FormElements() {
 				onChange={(files) =>
 					showToast(
 						Toast.Style.Success,
-						`Selected ${Array.isArray(files) ? files.length : files ? 1 : 0} file(s)`,
+						`Selected ${files.length} file(s)`,
 					)
 				}
 			/>
@@ -128,7 +200,7 @@ export default function FormElements() {
 				onChange={(files) =>
 					showToast(
 						Toast.Style.Success,
-						`Selected ${Array.isArray(files) ? files.length : files ? 1 : 0} file(s)`,
+						`Selected ${files.length} file(s)`,
 					)
 				}
 			/>
@@ -142,10 +214,13 @@ export default function FormElements() {
 				onChange={(files) =>
 					showToast(
 						Toast.Style.Success,
-						`Selected ${Array.isArray(files) ? files.length : files ? 1 : 0} directory(ies)`,
+						`Selected ${files.length} directory(ies)`,
 					)
 				}
 			/>
+
+			<ManagedSingleFilePicker />
+			<ManagedMultipleFilePicker />
 
 			{/* FilePicker - Multiple Directories */}
 			{/* Qt doesn't support multi-directory picking */}
@@ -158,7 +233,7 @@ export default function FormElements() {
 				onChange={(files) =>
 					showToast(
 						Toast.Style.Success,
-						`Selected ${Array.isArray(files) ? files.length : files ? 1 : 0} directory(ies)`,
+						`Selected ${files.length} directory(ies)`,
 					)
 				}
 			/> */}
@@ -172,7 +247,7 @@ export default function FormElements() {
 				onChange={(files) =>
 					showToast(
 						Toast.Style.Success,
-						`Selected ${Array.isArray(files) ? files.length : files ? 1 : 0} file(s)`,
+						`Selected ${files.length} file(s)`,
 					)
 				}
 			/> */}

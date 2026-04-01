@@ -1,6 +1,6 @@
-#include "extensions/raycast/store/intro-view.hpp"
+#include "qml/raycast-store-view-host.hpp"
+#include "qml/store-intro-view-host.hpp"
 #include "single-view-command-context.hpp"
-#include "store/store-listing-view.hpp"
 #include "theme.hpp"
 
 class RaycastStoreCommand : public BuiltinCallbackCommand {
@@ -25,10 +25,25 @@ class RaycastStoreCommand : public BuiltinCallbackCommand {
     auto alwaysShowIntro = ctrl->preferenceValues().value("alwaysShowIntro").toBool(false);
 
     if (alwaysShowIntro || !ctrl->storage().getItem("introCompleted").toBool()) {
-      ctx->navigation->pushView<RaycastStoreIntroView>();
+      static const QString INTRO = QStringLiteral(R"(
+# Welcome to the Raycast Extension Store
+
+Vicinae provides direct integration with the official [Raycast store](https://www.raycast.com/store), allowing you to search and install Raycast extensions directly from Vicinae.
+
+Each extension has a colored compatibility indicator showing how well it works on Linux.
+
+Vicinae also has its own [extension store](vicinae://extensions/vicinae/core/store), which does not suffer from these limitations.
+)");
+      auto icon = iconUrl();
+      auto storage = ctrl->storage();
+      ctx->navigation->pushView(
+          new StoreIntroViewHost(INTRO, icon, "Continue to store", [storage, ctx]() mutable {
+            storage.setItem("introCompleted", true);
+            ctx->navigation->replaceView<RaycastStoreViewHost>();
+          }));
       return;
     }
 
-    ctx->navigation->pushView<RaycastStoreListingView>();
+    ctx->navigation->pushView<RaycastStoreViewHost>();
   }
 };

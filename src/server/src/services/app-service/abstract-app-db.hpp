@@ -6,11 +6,12 @@
 #include <qobject.h>
 #include <qtmetamacros.h>
 #include <qurl.h>
-#include <quuid.h>
 #include "proto/application.pb.h"
 
 class AbstractApplication {
 public:
+  virtual ~AbstractApplication() = default;
+
   /**
    * Unique identifier for this app.
    */
@@ -39,6 +40,11 @@ public:
   virtual QString fullyQualifiedName() const { return displayName(); }
 
   virtual ImageURL iconUrl() const = 0;
+
+  /**
+   * Unlocalized name for the app, if available.
+   */
+  virtual std::optional<QString> unlocalizedName() const { return std::nullopt; }
 
   /**
    * Whether this application is an alternative action for an existing
@@ -190,4 +196,11 @@ public:
    * The preferred terminal emulator to use on this system.
    */
   virtual AppPtr terminalEmulator() const = 0;
+
+  /**
+   * Open the system file browser for the provided path.
+   * If `select` is true, implementations should try to reveal/select the item and
+   * gracefully fall back to opening the containing folder when that is not supported.
+   */
+  virtual bool showInFileBrowser(const std::filesystem::path &path, bool select) const = 0;
 };

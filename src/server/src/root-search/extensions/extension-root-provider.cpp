@@ -9,7 +9,7 @@
 #include "navigation-controller.hpp"
 #include "services/root-item-manager/root-item-manager.hpp"
 
-QString CommandRootItem::displayName() const { return m_command->name(); }
+QString CommandRootItem::title() const { return m_command->name(); }
 
 QString CommandRootItem::subtitle() const {
   // Display overriden subtitle if set
@@ -35,17 +35,14 @@ std::unique_ptr<ActionPanelState> CommandRootItem::newActionPanel(ApplicationCon
   auto itemSection = panel->createSection();
   auto extensionSection = panel->createSection();
   auto dangerSection = panel->createSection();
-  auto copyDeeplink = new CopyToClipboardAction(Clipboard::Text(m_command->deeplink()), "Copy deeplink");
 
   mainSection->addAction(new DefaultActionWrapper(uniqueId(), open));
-  itemSection->addAction(copyDeeplink);
 
   for (const auto action : RootSearchActionGenerator::generateActions(*this, metadata)) {
     itemSection->addAction(action);
   }
 
-  if (m_command->type() == CommandType::CommandTypeExtension) {
-    auto cmd = static_cast<ExtensionCommand *>(m_command.get());
+  if (auto cmd = dynamic_cast<ExtensionCommand *>(m_command.get())) {
     auto copyLocation =
         new CopyToClipboardAction(Clipboard::Text(cmd->path().c_str()), "Copy extension path");
 

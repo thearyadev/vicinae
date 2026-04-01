@@ -31,15 +31,21 @@ public:
   AppPtr fileBrowser() const override;
   AppPtr genericTextEditor() const override;
   AppPtr webBrowser() const override;
+  bool showInFileBrowser(const std::filesystem::path &path, bool select) const override;
 
   XdgAppDatabase();
 
 private:
-  bool launchProcess(const QString &prog, const QStringList args,
+  bool launchProcess(const QString &prog, const QStringList &args,
                      const std::optional<std::filesystem::path> &workingDirectory) const;
 
   xdgpp::DesktopEntry::TerminalExec getTermExec(const XdgApplication &app) const;
   xdgpp::DesktopEntry::TerminalExec inferTermExec(const XdgApplication &app) const;
+
+  /**
+   * Attempts to find the default terminal by following the xdg-terminal-exec specification
+   */
+  AppPtr findDefaultTerminalFromSpec() const;
 
   AppPtr defaultForMime(const QString &mime) const;
   std::vector<AppPtr> findAssociations(const QString &mime) const;

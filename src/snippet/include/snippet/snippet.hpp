@@ -1,6 +1,6 @@
 #pragma once
 #include "types.hpp"
-#include "keyboard.hpp"
+#include "linuxutils/keyboard.hpp"
 #include <sys/epoll.h>
 #include <libudev.h>
 #include <unistd.h>
@@ -22,7 +22,7 @@ protected:
   void setLayout(const LayoutInfo &info);
 
   template <typename T> void notify(typename T::Request req) {
-    const auto json = m_client.notify<T>(req);
+    const auto json = m_client.notify<T>(std::move(req));
     uint32_t size = json.size();
     std::cout.write(reinterpret_cast<const char *>(&size), sizeof(size));
     std::cout.write(json.data(), json.size());
@@ -37,7 +37,7 @@ protected:
   void emitExpansion(const Snippet &snipet);
 
 private:
-  UInputKeyboard m_kb;
+  linuxutils::UInputKeyboard m_kb;
   std::string m_text;
   udev *m_udev = nullptr;
   xkb_context *m_xkb = nullptr;

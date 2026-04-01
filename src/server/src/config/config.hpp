@@ -129,6 +129,8 @@ template <> struct Partial<WindowConfig> {
 };
 
 struct FontConfig {
+  std::string rendering = "qt";
+
   struct {
     std::string family = "auto";
     float size = 10.5;
@@ -136,6 +138,8 @@ struct FontConfig {
 };
 
 template <> struct Partial<FontConfig> {
+  std::optional<std::string> rendering;
+
   struct {
     std::optional<std::string> family;
     std::optional<float> size;
@@ -169,6 +173,14 @@ template <> struct Partial<Footer> {
   std::optional<int> height;
 };
 
+struct TelemetryConfig {
+  bool systemInfo = true;
+};
+
+template <> struct Partial<TelemetryConfig> {
+  std::optional<bool> systemInfo;
+};
+
 using KeybindMap = std::map<std::string, std::string>;
 
 using ProviderMap = std::map<std::string, ProviderData>;
@@ -182,6 +194,8 @@ struct ConfigValue {
   bool closeOnFocusLoss = false;
   bool considerPreedit = false;
   bool popToRootOnClose = false;
+  bool popOnBackspace = true;
+  bool activateOnSingleClick = false;
   std::string escapeKeyBehavior;
   std::string faviconService = "twenty";
   std::string keybinding = "default";
@@ -189,6 +203,7 @@ struct ConfigValue {
 
   FontConfig font;
   ThemeConfig theme;
+  TelemetryConfig telemetry;
 
   WindowConfig launcherWindow;
   Header header;
@@ -228,6 +243,8 @@ template <> struct Partial<ConfigValue> {
   std::optional<bool> closeOnFocusLoss;
   std::optional<bool> considerPreedit;
   std::optional<bool> popToRootOnClose;
+  std::optional<bool> popOnBackspace;
+  std::optional<bool> activateOnSingleClick;
   std::optional<std::string> escapeKeyBehavior;
   std::optional<std::string> faviconService;
   std::optional<std::string> keybinding;
@@ -236,6 +253,7 @@ template <> struct Partial<ConfigValue> {
 
   std::optional<Partial<FontConfig>> font;
   std::optional<Partial<ThemeConfig>> theme;
+  std::optional<Partial<TelemetryConfig>> telemetry;
 
   std::optional<Partial<WindowConfig>> launcherWindow;
   std::optional<Partial<Header>> header;
@@ -259,6 +277,7 @@ signals:
 private:
   struct LoadingOptions {
     bool resolveImports;
+    std::unordered_set<std::filesystem::path> &visited;
   };
 
   using ConfigResult = std::expected<ConfigValue, std::string>;
@@ -289,7 +308,7 @@ public:
 
   static void print(const ConfigValue &value) {
     std::string buf;
-    auto res = glz::write_json(value, buf);
+    [[maybe_unused]] auto res = glz::write_json(value, buf);
     std::cout << glz::prettify_json(buf) << std::endl;
   }
 
@@ -298,8 +317,10 @@ public:
 private:
   static void prunePartial(Partial<ConfigValue> &user);
 
-  PartialConfigResult load(const std::filesystem::path &path,
-                           const LoadingOptions &opts = {.resolveImports = true});
+  PartialConfigResult load(const std::filesystem::path &path, const LoadingOptions &opts);
+
+  static std::filesystem::path resolvePath(const std::filesystem::path &path,
+                                           const std::filesystem::path &cwd);
 
   void reloadConfig();
   ConfigResult loadUser(const LoadingOptions &opts);
@@ -314,5 +335,7 @@ private:
   ConfigValue m_defaultConfig;
 
   QTimer m_fsDebounce;
+
+  std::vector<std::string> m_envOverrides;
 };
 }; // namespace config

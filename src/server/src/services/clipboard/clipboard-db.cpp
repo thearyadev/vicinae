@@ -43,7 +43,7 @@ PaginatedResponse<ClipboardHistoryEntry> ClipboardDatabase::query(int limit, int
 
   QString queryString;
 
-  bool hasFilters = !opts.query.isEmpty() || opts.kind.has_value();
+  bool const hasFilters = !opts.query.isEmpty() || opts.kind.has_value();
 
   // Use different query strategies based on whether we have filters:
   // - Without filters: Sort-before-join strategy allows the index on (pinned_at, updated_at)
@@ -54,15 +54,15 @@ PaginatedResponse<ClipboardHistoryEntry> ClipboardDatabase::query(int limit, int
   //   so the standard join approach is acceptable.
   if (!hasFilters) {
     queryString = QString(R"(
-      SELECT 
+      SELECT
         s.id,
-        o.mime_type, 
-        o.text_preview, 
-        s.pinned_at, 
-        o.content_hash_md5, 
-        s.updated_at, 
-        o.size, 
-        s.kind, 
+        o.mime_type,
+        o.text_preview,
+        s.pinned_at,
+        o.content_hash_md5,
+        s.updated_at,
+        o.size,
+        s.kind,
         o.url_host,
         o.encryption_type,
         s.total_count
@@ -83,15 +83,15 @@ PaginatedResponse<ClipboardHistoryEntry> ClipboardDatabase::query(int limit, int
     queryString = R"(
       SELECT
         selection.id,
-        o.mime_type, 
-        o.text_preview, 
-        pinned_at, 
-        o.content_hash_md5, 
-        updated_at, 
-        o.size, 
-        selection.kind, 
+        o.mime_type,
+        o.text_preview,
+        pinned_at,
+        o.content_hash_md5,
+        updated_at,
+        o.size,
+        selection.kind,
         o.url_host,
-        o.encryption_type, 
+        o.encryption_type,
         COUNT(*) OVER() as count
       FROM selection
       JOIN data_offer o
@@ -168,7 +168,7 @@ std::optional<QString> ClipboardDatabase::retrieveKeywords(const QString &id) {
 }
 
 bool ClipboardDatabase::setKeywords(const QString &id, const QString &keywords) {
-  return transaction([&](auto *db) {
+  return transaction([&](auto *) {
     QSqlQuery query(m_db);
 
     query.prepare("UPDATE selection SET keywords = :keywords WHERE id = :id");
@@ -187,7 +187,8 @@ bool ClipboardDatabase::setKeywords(const QString &id, const QString &keywords) 
 bool ClipboardDatabase::removeAll() {
   QSqlQuery query(m_db);
 
-  return query.exec("DELETE FROM selection");
+  return query.exec("DELETE FROM selection_fts") && query.exec("DELETE FROM data_offer") &&
+         query.exec("DELETE FROM selection");
 }
 
 std::vector<QString> ClipboardDatabase::removeSelection(const QString &selectionId) {
@@ -196,9 +197,9 @@ std::vector<QString> ClipboardDatabase::removeSelection(const QString &selection
   QSqlQuery query(m_db);
 
   query.prepare(R"(
-  	DELETE FROM 
+  	DELETE FROM
 		data_offer
-	WHERE 
+	WHERE
 		selection_id = :selection_id
 	RETURNING id
   )");
@@ -252,14 +253,14 @@ ClipboardDatabase::findPreferredOffer(const QString &selectionId) {
     return {};
   }
 
-  QString id = query.value(0).toString();
+  QString const id = query.value(0).toString();
   auto encryption = static_cast<ClipboardEncryptionType>(query.value(1).toUInt());
 
   return PreferredClipboardOfferRecord{.id = id, .encryption = encryption};
 }
 
 bool ClipboardDatabase::setPinned(const QString &id, bool pinned) {
-  qint64 epoch = QDateTime::currentSecsSinceEpoch();
+  qint64 const epoch = QDateTime::currentSecsSinceEpoch();
   QSqlQuery query(m_db);
 
   if (pinned) {
@@ -311,7 +312,7 @@ bool ClipboardDatabase::transaction(const TxHandle &handle) {
 }
 
 bool ClipboardDatabase::tryBubbleUpSelection(const QString &idLike) {
-  qint64 updatedAt = QDateTime::currentSecsSinceEpoch();
+  qint64 const updatedAt = QDateTime::currentSecsSinceEpoch();
   QSqlQuery query(m_db);
 
   query.prepare("UPDATE selection SET updated_at = :updated_at WHERE hash_md5 = :id OR id = :id");
@@ -373,7 +374,7 @@ bool ClipboardDatabase::insertOffer(const InsertClipboardOfferPayload &payload) 
 }
 
 ClipboardDatabase::ClipboardDatabase() {
-  QString connId = QString("%1-%2").arg("clipboard").arg(Crypto::UUID::v4());
+  QString const connId = QString("%1-%2").arg("clipboard").arg(Crypto::UUID::v4());
   m_db = QSqlDatabase::addDatabase("QSQLITE", connId);
   m_db.setDatabaseName((Omnicast::dataDir() / "clipboard.db").c_str());
 
@@ -387,7 +388,7 @@ ClipboardDatabase::ClipboardDatabase() {
 }
 
 ClipboardDatabase::~ClipboardDatabase() {
-  QString conn = m_db.connectionName();
+  QString const conn = m_db.connectionName();
   m_db.close();
   m_db = QSqlDatabase();
   QSqlDatabase::removeDatabase(conn);

@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
+#include <ranges>
 #include <set>
 
 namespace fs = std::filesystem;
@@ -13,7 +14,7 @@ static fs::path homeDir() {
 }
 
 static std::string &toLowerCase(std::string &s) {
-  std::transform(s.begin(), s.end(), s.begin(), [](char c) { return std::tolower(c); });
+  std::ranges::transform(s, s.begin(), [](char c) { return std::tolower(c); });
   return s;
 }
 
@@ -111,24 +112,24 @@ std::vector<fs::path> xdgpp::configDirs() {
   return parseDirs<fs::path>(xcd);
 }
 
-std::optional<std::filesystem::path> xdgpp::runtimeDir() {
+std::optional<fs::path> xdgpp::runtimeDir() {
   if (auto v = getenv("XDG_RUNTIME_DIR")) return v;
   return {};
 }
 
-std::vector<std::filesystem::path> xdgpp::mimeAppsListPaths() {
+namespace {
+std::vector<fs::path> getMimeLikeConfigPaths(std::string_view fileName) {
   std::vector<std::string> desktops = xdgpp::currentDesktop();
-  std::transform(desktops.begin(), desktops.end(), desktops.begin(), toLowerCase);
+  std::ranges::transform(desktops, desktops.begin(), toLowerCase);
 
   std::vector<fs::path> paths;
-  std::string fileName = "mimeapps.list";
   auto configDirs = xdgpp::configDirs();
   auto dataDirs = xdgpp::dataDirs();
 
   paths.reserve(configDirs.size() + dataDirs.size() + desktops.size() * 4);
 
   for (const auto &desktop : desktops) {
-    std::string desktopFileName = desktop + "-" + fileName;
+    const std::string desktopFileName = std::string(desktop).append("-").append(fileName);
     paths.emplace_back(xdgpp::configHome() / desktopFileName);
   }
 
@@ -136,7 +137,7 @@ std::vector<std::filesystem::path> xdgpp::mimeAppsListPaths() {
 
   for (const auto &dir : configDirs) {
     for (const auto &desktop : desktops) {
-      std::string desktopFileName = desktop + "-" + fileName;
+      const std::string desktopFileName = std::string(desktop).append("-").append(fileName);
       paths.emplace_back(dir / desktopFileName);
     }
 
@@ -144,7 +145,7 @@ std::vector<std::filesystem::path> xdgpp::mimeAppsListPaths() {
   }
 
   for (const auto &desktop : desktops) {
-    std::string desktopFileName = desktop + "-" + fileName;
+    const std::string desktopFileName = std::string(desktop).append("-").append(fileName);
     paths.emplace_back(xdgpp::dataHome() / "applications" / desktopFileName);
   }
 
@@ -152,11 +153,48 @@ std::vector<std::filesystem::path> xdgpp::mimeAppsListPaths() {
 
   for (const auto &dir : dataDirs) {
     for (const auto &desktop : desktops) {
-      std::string desktopFileName = desktop + "-" + fileName;
+      const std::string desktopFileName = std::string(desktop).append("-").append(fileName);
       paths.emplace_back(dir / "applications" / desktopFileName);
     }
 
     paths.emplace_back(dir / "applications" / fileName);
+  }
+
+  return paths;
+}
+} // namespace
+
+std::vector<fs::path> xdgpp::mimeAppsListPaths() { return getMimeLikeConfigPaths("mimeapps.list"); }
+
+std::vector<fs::path> xdgpp::xdgTerminalsListPaths() {
+  std::vector<std::string> desktops = xdgpp::currentDesktop();
+  std::ranges::transform(desktops, desktops.begin(), toLowerCase);
+
+  std::vector<fs::path> paths;
+  auto cfgDirs = xdgpp::configDirs();
+  auto dtDirs = xdgpp::dataDirs();
+
+  paths.reserve((cfgDirs.size() + 1 + dtDirs.size()) * (desktops.size() + 1));
+
+  // main config sequence: ${XDG_CONFIG_HOME} then ${XDG_CONFIG_DIRS}
+  for (const auto &desktop : desktops) {
+    paths.emplace_back(xdgpp::configHome() / (desktop + "-xdg-terminals.list"));
+  }
+  paths.emplace_back(xdgpp::configHome() / "xdg-terminals.list");
+
+  for (const auto &dir : cfgDirs) {
+    for (const auto &desktop : desktops) {
+      paths.emplace_back(dir / (desktop + "-xdg-terminals.list"));
+    }
+    paths.emplace_back(dir / "xdg-terminals.list");
+  }
+
+  // upstream/distribution fallbacks: xdg-terminal-exec/ subdirs in ${XDG_DATA_DIRS} only
+  for (const auto &dir : dtDirs) {
+    for (const auto &desktop : desktops) {
+      paths.emplace_back(dir / "xdg-terminal-exec" / (desktop + "-xdg-terminals.list"));
+    }
+    paths.emplace_back(dir / "xdg-terminal-exec" / "xdg-terminals.list");
   }
 
   return paths;

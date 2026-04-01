@@ -2,6 +2,7 @@
 #include "common.hpp"
 #include <QDebug>
 #include <QFutureWatcher>
+#include "common/entrypoint.hpp"
 #include "services/oauth/oauth-service.hpp"
 #include "theme/theme-db.hpp"
 #include "root-search/extensions/extension-root-provider.hpp"
@@ -10,8 +11,10 @@
 #include "settings-controller/settings-controller.hpp"
 #include "services/extension-registry/extension-registry.hpp"
 #include <algorithm>
-#include <qapplication.h>
+#include <QGuiApplication>
+#include <format>
 #include <qfuturewatcher.h>
+#include <qlogging.h>
 #include <qobjectdefs.h>
 #include "extension/manager/extension-manager.hpp"
 #include <qsqlquery.h>
@@ -23,7 +26,7 @@
 #include "navigation-controller.hpp"
 #include "service-registry.hpp"
 #include "theme.hpp"
-#include "ui/provider-view/provider-view.hpp"
+#include "qml/provider-search-view-host.hpp"
 #include "ui/toast/toast.hpp"
 #include "vicinae.hpp"
 
@@ -34,13 +37,14 @@ std::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
 
   qDebug() << "got deeplink" << url.toString();
 
-  QUrlQuery query(url.query(QUrl::FullyDecoded));
+  QUrlQuery const query(url.query(QUrl::FullyDecoded));
 
   // Command may be in host (raycast://) or as first part of path (com.raycast:/)
   QString command = url.host();
   QString path = url.path();
+
   if (command.isEmpty() && !path.isEmpty()) {
-    QStringList pathParts = path.split('/', Qt::SkipEmptyParts);
+    QStringList const pathParts = path.split('/', Qt::SkipEmptyParts);
     command = pathParts.at(0);
     path = "/" + pathParts.mid(1).join('/');
   }
@@ -48,7 +52,7 @@ std::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
   // TODO: add a "quit" command to handle graceful shutdown (requires more work than you would expect)
   if (command == "kill") {
     qInfo() << "Killing vicinae server because a new instance was started";
-    QApplication::exit(1);
+    QCoreApplication::exit(1);
     return {};
   }
 
@@ -109,6 +113,87 @@ std::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
     return {};
   }
 
+  if (command == "launch") {
+    if (auto item = query.queryItemValue("toggle"); item == "true" && m_ctx.navigation->isWindowOpened()) {
+      m_ctx.navigation->closeWindow();
+      return {};
+    }
+
+    auto root = m_ctx.services->rootItemManager();
+
+    std::string str = path.sliced(1).toStdString();
+
+    if (str.ends_with('/')) { str.erase(str.end() - 1); }
+
+    // if the string directly matches a provider, we show a search view
+    // for that provider only.
+    if (auto provider = root->findProviderById(str.c_str())) {
+      m_ctx.navigation->popToRoot({.clearSearch = false});
+      m_ctx.navigation->setInstantDismiss();
+      m_ctx.navigation->pushView(new ProviderSearchViewHost(*provider));
+
+      if (auto text = query.queryItemValue("fallbackText"); !text.isEmpty()) {
+        m_ctx.navigation->setSearchText(text);
+      }
+
+      return {};
+    }
+
+    // otherwise we just launch the command
+
+    auto idx = str.find_last_of('/');
+
+    if (idx == std::string::npos) { return std::unexpected("Invalid format for launch deeplink"); }
+
+    EntrypointId id{str.substr(0, idx), str.substr(idx + 1)};
+    auto entrypoint = root->findItemById(id);
+
+    if (!entrypoint) {
+      return std::unexpected{std::format("{} does not refer to a valid entrypoint", std::string{id})};
+    }
+
+    m_ctx.navigation->popToRoot({.clearSearch = false});
+
+    ArgumentValues arguments;
+    if (query.hasQueryItem("arguments")) {
+      QString const argsText = query.queryItemValue("arguments");
+      QJsonParseError parseError;
+      QJsonDocument const doc = QJsonDocument::fromJson(argsText.toUtf8(), &parseError);
+      if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
+        QJsonObject obj = doc.object();
+        for (auto it = obj.begin(); it != obj.end(); ++it) {
+          arguments.emplace_back(it.key(), it.value().toString());
+        }
+      } else {
+        qWarning() << "Failed to parse arguments JSON:" << parseError.errorString();
+      }
+    }
+
+    m_ctx.navigation->setInstantDismiss();
+
+    // FIXME: hack, we must create a unified interface for all root items so that they can be launched with
+    // arguments And also, get their own execution context (much needed for script commands that may be async)
+    if (auto ext = dynamic_cast<CommandRootItem *>(entrypoint)) {
+      m_ctx.navigation->launch(ext->command(), arguments);
+    } else {
+      auto panel = entrypoint->newActionPanel(&m_ctx, root->itemMetadata(id));
+      panel->finalize(); // not pretty, one day we will fix this too
+      auto action = panel->primaryAction();
+
+      if (!action) return std::unexpected("No primary action for this root item");
+
+      action->execute(&m_ctx);
+    }
+
+    if (m_ctx.navigation->viewStackSize() > 1) m_ctx.navigation->setBackButtonVisibility(false);
+
+    if (auto text = query.queryItemValue("fallbackText"); !text.isEmpty()) {
+      m_ctx.navigation->setSearchText(text);
+    }
+
+    return {};
+  }
+
   if (command == "pop_current") {
     m_ctx.navigation->popCurrentView();
     return {};
@@ -125,15 +210,13 @@ std::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
     return {};
   }
 
-  if (command == "toast") {
-    QString title = query.hasQueryItem("title") ? query.queryItemValue("title") : "Toast";
-    m_ctx.services->toastService()->setToast(title, ToastStyle::Info);
-    return {};
-  }
-
   if (command == "extensions") {
     auto root = m_ctx.services->rootItemManager();
     auto components = path.sliced(1).split('/');
+
+    qWarning().nospace() << "vicinae://extensions is deprecated and will be removed in a future release. "
+                            "Please use vicinae://launch instead. See "
+                         << Omnicast::DOC_URL + "/deeplink" << " for more information.";
 
     if (components.size() == 2) {
       QString author = components[0];
@@ -146,16 +229,13 @@ std::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
 
       if (auto it = std::ranges::find_if(extensions, pred); it != extensions.end()) {
         m_ctx.navigation->popToRoot({.clearSearch = false});
-        m_ctx.navigation->pushView(new ProviderSearchView(**it));
+        m_ctx.navigation->setInstantDismiss();
+        m_ctx.navigation->pushView(new ProviderSearchViewHost(**it));
 
         if (auto text = query.queryItemValue("fallbackText"); !text.isEmpty()) {
           m_ctx.navigation->setSearchText(text);
         }
 
-        if (!m_ctx.navigation->isWindowOpened()) {
-          m_ctx.navigation->setInstantDismiss();
-          m_ctx.navigation->showWindow();
-        }
         return {};
       }
 
@@ -168,11 +248,11 @@ std::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
       return {};
     }
 
-    QString author = components[0];
-    QString extName = components[1];
-    QString cmdName = components[2];
+    QString const &author = components[0];
+    QString const &extName = components[1];
+    QString const &cmdName = components[2];
 
-    for (ExtensionRootProvider *ext : root->extensions()) {
+    for (ExtensionRootProvider const *ext : root->extensions()) {
       for (const auto &cmd : ext->repository()->commands()) {
         // Author is suffixed, check author with suffix
         if (author.contains("@")) {
@@ -188,9 +268,9 @@ std::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
           // Read `arguments` query parameter
           ArgumentValues arguments;
           if (query.hasQueryItem("arguments")) {
-            QString argsText = query.queryItemValue("arguments");
+            QString const argsText = query.queryItemValue("arguments");
             QJsonParseError parseError;
-            QJsonDocument doc = QJsonDocument::fromJson(argsText.toUtf8(), &parseError);
+            QJsonDocument const doc = QJsonDocument::fromJson(argsText.toUtf8(), &parseError);
             if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
               QJsonObject obj = doc.object();
               for (auto it = obj.begin(); it != obj.end(); ++it) {
@@ -201,15 +281,11 @@ std::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
             }
           }
 
+          m_ctx.navigation->setInstantDismiss();
           m_ctx.navigation->launch(cmd, arguments);
 
           if (auto text = query.queryItemValue("fallbackText"); !text.isEmpty()) {
             m_ctx.navigation->setSearchText(text);
-          }
-
-          if (cmd->isView() && !m_ctx.navigation->isWindowOpened()) {
-            m_ctx.navigation->setInstantDismiss();
-            m_ctx.navigation->showWindow();
           }
 
           break;
@@ -222,14 +298,14 @@ std::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
 
   if (command == "theme") {
     auto components = path.sliced(1).split('/');
-    auto verb = components.at(0);
+    const auto &verb = components.at(0);
 
     if (verb == "set") {
       if (components.size() != 2) {
         return std::unexpected("Correct usage is vicinae://theme/set/<theme_id>");
       }
 
-      QString id = components.at(1);
+      QString const &id = components.at(1);
       auto &service = ThemeService::instance();
       auto cfg = m_ctx.services->config();
 
@@ -257,8 +333,8 @@ std::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
 
   if (command == "oauth") {
     auto oauth = m_ctx.services->oauthService();
-    QString code = query.queryItemValue("code");
-    QString state = query.queryItemValue("state");
+    QString const code = query.queryItemValue("code");
+    QString const state = query.queryItemValue("state");
     oauth->fullfillRequest(state, code);
     return {};
   }
@@ -305,15 +381,6 @@ std::expected<void, std::string> IpcCommandHandler::handleUrl(const QUrl &url) {
       // stopping a development session doesn't remove the bundle, but if a command
       // from the extension is launched outside of dev mode it's going to be run in
       // the production environment (although the bundle itself won't be optimized for production)
-      return {};
-    }
-  }
-
-  if (command == "internal") {
-    if (path == "/restart-extension-runtime") {
-      qInfo() << "Restarting extension runtime....";
-      m_ctx.navigation->popToRoot();
-      m_ctx.services->extensionManager()->start();
       return {};
     }
   }

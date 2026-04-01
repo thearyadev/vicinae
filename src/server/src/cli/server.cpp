@@ -18,6 +18,7 @@
 #include "root-search/shortcuts/shortcut-root-provider.hpp"
 #include "service-registry.hpp"
 #include "services/background-effect/background-effect-manager.hpp"
+#include "services/file-chooser/file-chooser-service.hpp"
 #include "services/browser-extension-service.hpp"
 #include "services/calculator-service/calculator-service.hpp"
 #include "services/clipboard/clipboard-service.hpp"
@@ -31,27 +32,39 @@
 #include "services/extension-store/vicinae-store.hpp"
 #include "services/script-command/script-command-service.hpp"
 #include "services/shortcut/shortcut-service.hpp"
+#include "services/news/news-service.hpp"
+#include "services/telemetry/telemetry-service.hpp"
 #include "services/toast/toast-service.hpp"
 #include "services/window-manager/window-manager.hpp"
 #include "services/snippet/snippet-service.hpp"
+#include "services/paste/paste-service.hpp"
+#include "services/paste/linux-paste-service.hpp"
 #include "settings-controller/settings-controller.hpp"
-#include "ui/launcher-window/launcher-window.hpp"
+#include "qml/launcher-window.hpp"
 #include "utils.hpp"
 #include "vicinae-ipc/client.hpp"
 #include "vicinae.hpp"
 #include <filesystem>
-#include <qapplication.h>
-#include <signal.h>
+#include <QGuiApplication>
+#include <QQuickWindow>
+#include <csignal>
 #include <QString>
 #include <qlockfile.h>
 #include <qlogging.h>
-#include <qpixmapcache.h>
-#include <qstylefactory.h>
+#include <QtQuickControls2/QQuickStyle>
 #include <system_error>
 #include "common/CLI11.hpp"
 #include "server.hpp"
 
 namespace fs = std::filesystem;
+
+static void applyTextRenderingMode(const config::FontConfig &fontConfig) {
+  if (fontConfig.rendering == "qt") {
+    QQuickWindow::setTextRenderType(QQuickWindow::QtTextRendering);
+  } else {
+    QQuickWindow::setTextRenderType(QQuickWindow::NativeTextRendering);
+  }
+}
 
 void CliServerCommand::setup(CLI::App *app) {
   app->add_flag("--open", m_open, "Open the main window once the server is started");
@@ -67,7 +80,7 @@ void CliServerCommand::setup(CLI::App *app) {
                 "Do not start the extension runtime node process. Typescript extensions will not run.");
 }
 
-void CliServerCommand::run(CLI::App *app) {
+void CliServerCommand::run(CLI::App *) {
   using namespace std::chrono_literals;
 
   qInstallMessageHandler(coloredMessageHandler);
@@ -89,18 +102,21 @@ void CliServerCommand::run(CLI::App *app) {
     }
   }
 
+  if (!qEnvironmentVariableIsSet("QT_QUICK_FLICKABLE_WHEEL_DECELERATION"))
+    qputenv("QT_QUICK_FLICKABLE_WHEEL_DECELERATION", "10000");
+
   int argc = 1;
   static char *argv[] = {strdup("command"), nullptr};
-  QApplication qapp(argc, argv);
+  QGuiApplication const qapp(argc, argv);
+  QQuickWindow::setTextRenderType(QQuickWindow::NativeTextRendering);
 
   if (const auto launcher = Environment::detectAppLauncher()) {
     qInfo() << "Detected launch prefix:" << *launcher;
   }
 
-  // discard system specific qt theming
-  QApplication::setStyle(QStyleFactory::create("fusion"));
+  QQuickStyle::setStyle(QStringLiteral("Basic"));
 
-  std::filesystem::create_directories(Omnicast::runtimeDir());
+  Omnicast::ensureDirectories();
 
   {
     auto registry = ServiceRegistry::instance();
@@ -111,8 +127,10 @@ void CliServerCommand::run(CLI::App *app) {
     auto appService = std::make_unique<AppService>(*omniDb.get());
     auto snippetService = std::make_unique<SnippetService>(Omnicast::dataDir() / "snippets" / "snippets.json",
                                                            *windowManager, *appService);
-    auto clipboardManager =
-        std::make_unique<ClipboardService>(Omnicast::dataDir() / "clipboard.db", *windowManager, *appService);
+    auto clipboardManager = std::make_unique<ClipboardService>(Omnicast::dataDir() / "clipboard.db");
+    auto linuxPaste = std::make_unique<LinuxPasteService>();
+    auto pasteService =
+        std::make_unique<PasteService>(*clipboardManager, *windowManager, *appService, std::move(linuxPaste));
     auto fontService = std::make_unique<FontService>();
     auto configService = std::make_unique<config::Manager>(m_config);
     auto rootItemManager = std::make_unique<RootItemManager>(*configService, *localStorage);
@@ -151,6 +169,7 @@ void CliServerCommand::run(CLI::App *app) {
     registry->setLocalStorage(std::move(localStorage));
     registry->setExtensionManager(std::move(extensionManager));
     registry->setClipman(std::move(clipboardManager));
+    registry->setPasteService(std::move(pasteService));
     registry->setSnippetService(std::move(snippetService));
     registry->setWindowManager(std::move(windowManager));
     registry->setFontService(std::move(fontService));
@@ -163,6 +182,9 @@ void CliServerCommand::run(CLI::App *app) {
     registry->setScriptDb(std::make_unique<ScriptCommandService>());
     registry->setBrowserExtension(std::make_unique<BrowserExtensionService>());
     registry->setBackgroundEffectManager(std::make_unique<BackgroundEffectManager>());
+    registry->setFileChooserService(std::make_unique<FileChooserService>());
+    registry->setNewsService(std::make_unique<NewsService>(*registry->config()));
+    registry->setTelemetry(std::make_unique<TelemetryService>(*registry->config()));
 
     auto root = registry->rootItemManager();
     auto builtinCommandDb = std::make_unique<CommandDatabase>();
@@ -188,12 +210,10 @@ void CliServerCommand::run(CLI::App *app) {
       std::vector<QString> removed;
 
       for (const auto &provider : root->providers()) {
-        if (!provider->isExtension()) continue;
-
-        auto extp = static_cast<ExtensionRootProvider *>(provider);
-
-        if (!extp->isBuiltin() && !scanned.contains(extp->uniqueId())) {
-          removed.emplace_back(extp->uniqueId());
+        if (auto extp = dynamic_cast<ExtensionRootProvider *>(provider)) {
+          if (!extp->isBuiltin() && !scanned.contains(extp->uniqueId())) {
+            removed.emplace_back(extp->uniqueId());
+          }
         }
       }
 
@@ -222,8 +242,8 @@ void CliServerCommand::run(CLI::App *app) {
   }
 
   FaviconService::initialize(new FaviconService(Omnicast::dataDir() / "favicon"));
-  QApplication::setApplicationName("vicinae");
-  QApplication::setQuitOnLastWindowClosed(false);
+  QGuiApplication::setApplicationName("vicinae");
+  QGuiApplication::setQuitOnLastWindowClosed(false);
   ApplicationContext ctx;
 
   ctx.navigation = std::make_unique<NavigationController>(ctx);
@@ -243,18 +263,35 @@ void CliServerCommand::run(CLI::App *app) {
     auto &theme = ThemeService::instance();
     auto &nextTheme = next.systemTheme();
     auto &prevTheme = prev.systemTheme();
-    bool themeChangeRequired = nextTheme.name != prevTheme.name;
+    bool const themeChangeRequired = nextTheme.name != prevTheme.name;
 
-    bool iconThemeChangeRequired = nextTheme.iconTheme != prevTheme.iconTheme;
-    IconThemeDatabase iconThemeDb;
+    IconThemeDatabase const iconThemeDb;
+
+    applyTextRenderingMode(next.font);
 
     theme.setFontBasePointSize(next.font.normal.size);
 
-    if (next.font.normal.size != prev.font.normal.size) {
-      if (!themeChangeRequired) { theme.reloadCurrentTheme(); }
+    bool const fontChanged =
+        next.font.normal.size != prev.font.normal.size || next.font.normal.family != prev.font.normal.family;
+
+    if (fontChanged) {
+      auto &family = next.font.normal.family;
+      QFont font;
+      if (family == "auto") {
+        auto builtin = ServiceRegistry::instance()->fontService()->builtinFontFamily();
+        if (!builtin.isEmpty()) font.setFamily(builtin);
+      } else if (family != "system") {
+        font.setFamily(QString::fromStdString(family));
+      }
+      font.setPointSizeF(next.font.normal.size);
+      QGuiApplication::setFont(font);
     }
 
-    if (themeChangeRequired) { theme.setTheme(nextTheme.name.c_str()); }
+    if (themeChangeRequired) {
+      theme.setTheme(nextTheme.name.c_str());
+    } else if (fontChanged) {
+      theme.reloadCurrentTheme();
+    }
 
     ctx.navigation->setPopToRootOnClose(next.popToRootOnClose);
     ctx.navigation->setCloseOnFocusLoss(next.closeOnFocusLoss);
@@ -268,20 +305,7 @@ void CliServerCommand::run(CLI::App *app) {
       QIcon::setThemeName(iconThemeDb.guessBestTheme());
     }
 
-    if (next.font.normal.family != prev.font.normal.family) {
-      auto &family = next.font.normal.family;
-      if (family == "auto") {
-        auto builtin = ServiceRegistry::instance()->fontService()->builtinFontFamily();
-        QApplication::setFont(builtin.isEmpty() ? QFont() : QFont(builtin));
-      } else if (family == "system") {
-        QApplication::setFont(QFont());
-      } else {
-        QApplication::setFont(QFont(family.c_str()));
-      }
-
-      qApp->setStyleSheet(qApp->styleSheet());
-      theme.reloadCurrentTheme();
-    }
+    ServiceRegistry::instance()->telemetry()->setEnabled(next.telemetry.systemInfo);
   };
 
   auto cfgService = ServiceRegistry::instance()->config();
@@ -290,8 +314,8 @@ void CliServerCommand::run(CLI::App *app) {
     ctx.navigation->confirmAlert("Failed to load config", qStringFromStdView(message), []() {});
   });
 
-  QObject::connect(QApplication::styleHints(), &QStyleHints::colorSchemeChanged, [&]() {
-    IconThemeDatabase iconThemeDb;
+  QObject::connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, [&]() {
+    IconThemeDatabase const iconThemeDb;
     auto &value = cfgService->value();
     auto &theme = value.systemTheme();
 
@@ -302,13 +326,11 @@ void CliServerCommand::run(CLI::App *app) {
     }
 
     ThemeService::instance().setTheme(theme.name.c_str());
-    qApp->setStyle(QStyleFactory::create("fusion"));
-    qApp->setStyleSheet(qApp->styleSheet());
   });
 
   QObject::connect(
       KeybindManager::instance(), &KeybindManager::keybindChanged,
-      [cfgService](Keybind bind, const Keyboard::Shortcut &shortcut) {
+      [cfgService](Keybind, const Keyboard::Shortcut &shortcut) {
         auto info = KeybindManager::instance()->findBoundInfo(shortcut);
         cfgService->mergeWithUser(
             {.keybinds = config::KeybindMap{{info->id.toStdString(), shortcut.toString().toStdString()}}});
@@ -317,19 +339,14 @@ void CliServerCommand::run(CLI::App *app) {
   QObject::connect(cfgService, &config::Manager::configChanged, configChanged);
   QIcon::setFallbackSearchPaths(Environment::fallbackIconSearchPaths());
 
+  auto builtinFont = ServiceRegistry::instance()->fontService()->builtinFontFamily();
+  if (!builtinFont.isEmpty()) QGuiApplication::setFont(QFont(builtinFont));
+
   configChanged(cfgService->value(), {});
 
-  LauncherWindow launcher(ctx);
-
-  /*
-  QTimer timer;
-
-  QObject::connect(&timer, &QTimer::timeout,
-                   [&]() { qDebug() << "widget count" << qt_utils::countQObjectChildren(&launcher); });
-  timer.start(1000);
-  */
-
   ctx.navigation->launch(std::make_shared<RootCommand>());
+
+  LauncherWindow const qmlWindow(ctx);
 
   if (m_open) {
     ctx.navigation->showWindow();

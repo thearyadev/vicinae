@@ -34,6 +34,8 @@ std::optional<std::string> DesktopEntry::version() const { return m_version; }
 
 std::string DesktopEntry::name() const { return m_name; }
 
+std::optional<std::string> DesktopEntry::unlocalizedName() const { return m_unlocalizedName; }
+
 std::optional<std::string> DesktopEntry::url() const { return m_url; }
 
 std::optional<std::string> DesktopEntry::genericName() const { return m_genericName; }
@@ -97,9 +99,7 @@ bool DesktopEntry::terminal() const { return m_terminal; }
 
 bool DesktopEntry::isValid() const { return !m_error.has_value(); }
 
-bool DesktopEntry::shouldBeShownInCurrentContext() const {
-  if (deleted() || noDisplay()) return false;
-
+bool DesktopEntry::matchesCurrentDesktop() const {
   auto desktops = xdgpp::currentDesktop();
   auto hasDesktopMatch = [&](const std::string &in) {
     return std::ranges::find(desktops, in) != desktops.end();
@@ -117,6 +117,12 @@ bool DesktopEntry::shouldBeShownInCurrentContext() const {
   }
 
   return true;
+}
+
+bool DesktopEntry::shouldBeShownInCurrentContext() const {
+  if (deleted() || noDisplay()) return false;
+
+  return matchesCurrentDesktop();
 }
 
 std::optional<std::string> DesktopEntry::errorMessage() const { return m_error; }
@@ -137,7 +143,7 @@ DesktopEntry::DesktopEntry(const fs::path &path, const ParseOptions &opts) {
 }
 
 DesktopEntry::DesktopEntry(std::string_view data, const ParseOptions &opts) {
-  DesktopEntryReader entry(data, {.locale = opts.locale});
+  const DesktopEntryReader entry(data, {.locale = opts.locale});
   auto group = entry.group("Desktop Entry");
 
   if (!group) {
@@ -172,6 +178,7 @@ DesktopEntry::DesktopEntry(std::string_view data, const ParseOptions &opts) {
     m_error = "Name key is always required";
   }
 
+  if (auto name = group->key("Name", false)) { m_unlocalizedName = name->asString(); }
   if (auto icon = group->key("Icon")) { m_icon = icon->asString(); }
   if (auto genericName = group->key("GenericName")) { m_genericName = genericName->asString(); }
   if (auto comment = group->key("Comment")) { m_comment = comment->asString(); }
@@ -200,7 +207,7 @@ DesktopEntry::DesktopEntry(std::string_view data, const ParseOptions &opts) {
     }
   }
 
-  bool isTerminalEmulator = std::ranges::contains(m_categories, std::string("TerminalEmulator"));
+  const bool isTerminalEmulator = std::ranges::contains(m_categories, std::string("TerminalEmulator"));
 
   if (isTerminalEmulator) {
     auto terminalExec = group->key("X-TerminalArgExec");

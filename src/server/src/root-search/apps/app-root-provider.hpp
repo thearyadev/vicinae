@@ -3,21 +3,21 @@
 #include "services/app-service/app-service.hpp"
 #include "services/root-item-manager/root-item-manager.hpp"
 #include <qjsonobject.h>
-#include <qwidget.h>
 
 class AppRootItem : public RootItem {
   std::shared_ptr<AbstractApplication> m_app;
 
   double baseScoreWeight() const override;
   QString typeDisplayName() const override;
-  QString displayName() const override;
+  QString title() const override;
   QString subtitle() const override;
   std::unique_ptr<ActionPanelState> newActionPanel(ApplicationContext *ctx,
                                                    const RootItemMetadata &metadata) const override;
   AccessoryList accessories() const override;
   EntrypointId uniqueId() const override;
   ImageURL iconUrl() const override;
-  QWidget *settingsDetail(const QJsonObject &preferences) const override;
+  QString settingsDescription() const override;
+  std::vector<std::pair<QString, QString>> settingsMetadata() const override;
   std::vector<QString> keywords() const override;
   bool isActive() const override;
 

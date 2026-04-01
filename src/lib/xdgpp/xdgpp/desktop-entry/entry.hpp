@@ -62,6 +62,8 @@ public:
    */
   std::string name() const;
 
+  std::optional<std::string> unlocalizedName() const;
+
   /**
    * Generic name of the application, for example "Web Browser".
    */
@@ -138,6 +140,11 @@ public:
   bool singleMainWindow() const;
 
   /**
+   * Checks only the OnlyShowIn/NotShowIn keys against the current desktop.
+   */
+  bool matchesCurrentDesktop() const;
+
+  /**
    * Utility method to know whether the entry should be shown in the current
    * environment we are in. This checks the 'Hidden', 'NoDisplay', 'ShowIn' and 'NotShowIn' keys
    * all at once.
@@ -187,6 +194,7 @@ private:
   Type m_type = Type::Application;
   std::string m_version;
   std::string m_name;
+  std::optional<std::string> m_unlocalizedName;
   std::string m_genericName;
   bool m_noDisplay = false;
   std::optional<std::string> m_comment;

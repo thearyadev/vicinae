@@ -1,11 +1,15 @@
+#include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <ranges>
 #include <QStyleHints>
 #include <glaze/util/key_transformers.hpp>
+#include <qlogging.h>
 #include <qstylehints.h>
 #include <string_view>
-#include <QApplication>
+#include <QGuiApplication>
+#include <utility>
 #include "utils.hpp"
 #include "config.hpp"
 
@@ -19,6 +23,7 @@ SNAKE_CASIFY(config::LayerShellConfig);
 SNAKE_CASIFY(config::WindowConfig);
 SNAKE_CASIFY(config::SystemThemeConfig);
 SNAKE_CASIFY(config::ThemeConfig);
+SNAKE_CASIFY(config::TelemetryConfig);
 SNAKE_CASIFY(config::WindowCSD);
 
 struct ConfigTransformer : glz::snake_case {
@@ -57,7 +62,7 @@ template <typename T> T static merge(const auto &v1, const auto &v2) {
 }
 
 const SystemThemeConfig &ConfigValue::systemTheme() const {
-  switch (QApplication::styleHints()->colorScheme()) {
+  switch (QGuiApplication::styleHints()->colorScheme()) {
   case Qt::ColorScheme::Light:
     return theme.light;
   default:
@@ -65,7 +70,7 @@ const SystemThemeConfig &ConfigValue::systemTheme() const {
   }
 }
 
-Manager::Manager(fs::path path) : m_userPath(path) {
+Manager::Manager(fs::path path) : m_userPath(std::move(path)) {
   auto file = QFile(":config.jsonc");
 
   if (!file.open(QIODevice::ReadOnly)) { throw std::runtime_error("Failed to open default config"); }
@@ -79,6 +84,19 @@ Manager::Manager(fs::path path) : m_userPath(path) {
 
   m_fsDebounce.setSingleShot(true);
   m_fsDebounce.setInterval(100);
+
+  if (const char *envOverrides = std::getenv("VICINAE_OVERRIDES")) {
+    m_envOverrides =
+        std::string_view{envOverrides} | std::views::split(':') |
+        std::views::transform([](const auto &part) { return std::string{part.begin(), part.end()}; }) |
+        std::ranges::to<std::vector<std::string>>();
+
+    qInfo() << "Loaded" << m_envOverrides.size() << "path(s) from VICINAE_OVERRIDES";
+
+    for (const auto &override : m_envOverrides) {
+      qInfo() << override;
+    }
+  }
 
   initConfig();
   reloadConfig();
@@ -119,7 +137,7 @@ bool Manager::mergeEntrypointWithUser(const EntrypointId &id, const ProviderItem
 }
 
 bool Manager::mergeThemeConfig(const config::Partial<config::SystemThemeConfig> &cfg) {
-  switch (QApplication::styleHints()->colorScheme()) {
+  switch (QGuiApplication::styleHints()->colorScheme()) {
   case Qt::ColorScheme::Light:
     return mergeWithUser({.theme = config::Partial<config::ThemeConfig>{.light = cfg}});
   default:
@@ -180,14 +198,15 @@ void Manager::reloadConfig() {
   std::error_code ec;
   if (!std::filesystem::is_regular_file(m_userPath, ec)) return;
 
-  auto res = loadUser({.resolveImports = true});
+  std::unordered_set<std::filesystem::path> visited;
+  auto res = loadUser({.resolveImports = true, .visited = visited});
 
   if (!res) {
     emit configLoadingError(res.error());
     return;
   }
 
-  ConfigValue prev = std::move(m_user);
+  ConfigValue const prev = std::move(m_user);
   m_user = std::move(res.value());
   emit configChanged(m_user, prev);
 }
@@ -199,6 +218,15 @@ void Manager::initConfig() {
     fs::create_directories(m_userPath.parent_path());
     writeUser({});
   }
+}
+
+std::filesystem::path Manager::resolvePath(const std::filesystem::path &path,
+                                           const std::filesystem::path &cwd) {
+  std::string importPath = expandPath(path);
+
+  if (!importPath.starts_with('/')) { importPath = cwd.parent_path() / importPath; }
+
+  return std::filesystem::weakly_canonical(importPath);
 }
 
 Manager::PartialConfigResult Manager::load(const std::filesystem::path &path, const LoadingOptions &opts) {
@@ -213,23 +241,41 @@ Manager::PartialConfigResult Manager::load(const std::filesystem::path &path, co
     return std::unexpected(std::format("Failed to read JSONC file at {}: {}", path.c_str(), glzErrMsg));
   }
 
+  auto importFile = [this, &opts](Partial<ConfigValue> &cfg, const std::string &importPath,
+                                  bool override) -> std::expected<Partial<ConfigValue>, std::string> {
+    if (opts.visited.contains(importPath)) {
+      qWarning().nospace() << "Circular import detected for " << importPath << ", ignoring...";
+      return cfg;
+    }
+
+    opts.visited.insert(importPath);
+
+    if (std::filesystem::exists(importPath)) {
+      PartialConfigResult imported = load(importPath, opts);
+
+      if (!imported) {
+        return std::unexpected(std::format("Failed to import file \"{}\": {}", importPath, imported.error()));
+      }
+
+      if (override) return merge<Partial<ConfigValue>>(cfg, imported);
+      return merge<Partial<ConfigValue>>(imported, cfg);
+    } else {
+      qWarning().nospace() << "Imported config file not found: " << importPath;
+      return cfg;
+    }
+  };
+
   if (opts.resolveImports) {
     for (const auto &imp : cfg.imports.value_or({})) {
-      std::string importPath = expandPath(imp);
+      auto result = importFile(cfg, resolvePath(imp, path), false);
+      if (!result) return result;
+      cfg = std::move(result).value();
+    }
 
-      if (!importPath.starts_with('/')) { importPath = path.parent_path() / importPath; }
-      if (std::filesystem::exists(importPath)) {
-        PartialConfigResult imported = load(importPath, opts);
-
-        if (!imported) {
-          return std::unexpected(
-              std::format("Failed to import file \"{}\": {}", importPath, imported.error()));
-        }
-
-        cfg = merge<Partial<ConfigValue>>(imported, cfg);
-      } else {
-        qWarning() << "config file at" << importPath << "could not be found";
-      }
+    for (const auto &overridePath : m_envOverrides) {
+      auto result = importFile(cfg, resolvePath(overridePath, path), true);
+      if (!result) return result;
+      cfg = std::move(result).value();
     }
   }
 
@@ -257,7 +303,8 @@ void Manager::prunePartial(Partial<ConfigValue> &user) {
       }
 
       if (v.entrypoints) {
-        for (auto it2 = v.entrypoints->begin(); it2 != v.entrypoints->end();) {
+        auto &entrypoints = *v.entrypoints;
+        for (auto it2 = entrypoints.begin(); it2 != entrypoints.end();) {
           auto currentIt = it2++;
           ProviderItemData &vi = currentIt->second;
 
@@ -268,11 +315,11 @@ void Manager::prunePartial(Partial<ConfigValue> &user) {
 
           if (vi.alias && vi.alias->empty()) { vi.alias.reset(); }
           if (!vi.enabled.has_value() && vi.preferences.value_or({}).empty() && !vi.alias) {
-            v.entrypoints->erase(currentIt);
+            entrypoints.erase(currentIt);
           }
         }
 
-        if (v.entrypoints->empty()) { v.entrypoints.reset(); }
+        if (entrypoints.empty()) { v.entrypoints.reset(); }
       }
 
       if (!v.enabled && v.preferences.value_or({}).empty() && !v.entrypoints) { pvd.erase(currentIt); }

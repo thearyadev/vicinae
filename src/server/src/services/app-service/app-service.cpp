@@ -90,13 +90,13 @@ std::shared_ptr<AbstractApplication> AppService::webBrowser() const { return m_p
 std::shared_ptr<AbstractApplication> AppService::fileBrowser() const { return m_provider->fileBrowser(); }
 
 std::vector<std::shared_ptr<AbstractApplication>> AppService::list(const AppListOptions &opts) const {
-	auto apps = m_provider->list();
-	if (opts.sortAlphabetically) {
-		std::ranges::sort(apps, [](const auto &a, const auto &b) {
-			return a->displayName().compare(b->displayName(), Qt::CaseInsensitive) < 0;
-		});
-	}
-	return apps;
+  auto apps = m_provider->list();
+  if (opts.sortAlphabetically) {
+    std::ranges::sort(apps, [](const auto &a, const auto &b) {
+      return a->displayName().compare(b->displayName(), Qt::CaseInsensitive) < 0;
+    });
+  }
+  return apps;
 }
 
 std::shared_ptr<AbstractApplication> AppService::findDefaultOpener(const QString &target) const {
@@ -108,6 +108,10 @@ std::shared_ptr<AbstractApplication> AppService::find(const QString &target) con
   if (auto app = m_provider->findByClass(target)) { return app; }
 
   return nullptr;
+}
+
+bool AppService::showInFileBrowser(const std::filesystem::path &path, bool select) const {
+  return m_provider->showInFileBrowser(path, select);
 }
 
 void AppService::handleDirectoryChanged(const QString &path) {
@@ -159,8 +163,10 @@ bool AppService::reinstallWatches(const std::vector<fs::path> &paths) {
 }
 
 bool AppService::scanSync() {
-  bool result = m_provider->scan(mergedPaths());
+  auto paths = mergedPaths();
+  bool const result = m_provider->scan(paths);
 
+  reinstallWatches(paths);
   emit appsChanged();
 
   return result;

@@ -1,14 +1,16 @@
 #include "xdg-app-database.hpp"
 #include "environment.hpp"
 #include "services/app-service/xdg/xdg-app.hpp"
-#include "timer.hpp"
 #include "xdgpp/desktop-entry/entry.hpp"
 #include "xdgpp/desktop-entry/file.hpp"
 #include "xdgpp/mime/iterator.hpp"
 #include <algorithm>
 #include <qtenvironmentvariables.h>
 #include <ranges>
-#include "xdgpp/desktop-entry/exec.hpp"
+#include "xdgpp/xdg-terminal-exec/xdg-terminals-list.hpp"
+#include <QDBusConnection>
+#include <QDBusInterface>
+#include <QDBusReply>
 #include <filesystem>
 #include <memory>
 #include <qcontainerfwd.h>
@@ -19,6 +21,7 @@
 #include <qurl.h>
 #include <set>
 #include <QDir>
+#include <unordered_set>
 #include <xdgpp/desktop-entry/iterator.hpp>
 #include <xdgpp/env/env.hpp>
 #include <xdgpp/mime/mime-apps-list.hpp>
@@ -26,6 +29,42 @@
 namespace fs = std::filesystem;
 
 using AppPtr = XdgAppDatabase::AppPtr;
+
+// This is non standard, and isn't set correctly in most environments
+// This will be deprecated in favor of xdg-terminal-exec compliance
+static constexpr const auto FALLBACK_TERMINAL_MIME = "x-scheme-handler/terminal";
+
+namespace {
+
+bool revealInFileManager(const std::filesystem::path &path) {
+  auto const fileUrl = QUrl::fromLocalFile(path.c_str()).toString();
+  QDBusInterface iface("org.freedesktop.FileManager1", "/org/freedesktop/FileManager1",
+                       "org.freedesktop.FileManager1", QDBusConnection::sessionBus());
+
+  if (!iface.isValid()) { return false; }
+
+  QDBusReply<void> const reply = iface.call("ShowItems", QStringList{fileUrl}, QString{});
+  return reply.isValid();
+}
+
+std::optional<fs::path> containingFolderTarget(const fs::path &path) {
+  std::error_code ec;
+
+  if (!fs::exists(path, ec)) {
+    auto parentPath = path.parent_path();
+    if (parentPath.empty()) { return std::nullopt; }
+    return parentPath;
+  }
+
+  if (fs::is_directory(path, ec)) {
+    auto parentPath = path.parent_path();
+    return parentPath.empty() ? std::optional(path) : std::optional(parentPath);
+  }
+
+  return path;
+}
+
+} // namespace
 
 std::shared_ptr<AbstractApplication> XdgAppDatabase::defaultForMime(const QString &mime) const {
   for (const auto &list : m_mimeAppsLists) {
@@ -52,14 +91,14 @@ bool XdgAppDatabase::scan(const std::vector<std::filesystem::path> &paths) {
 
   std::set<std::string> seen;
 
-  for (const auto &dir : xdgpp::appDirs()) {
+  for (const auto &dir : paths) {
     std::error_code ec;
 
     for (const auto &entry : fs::recursive_directory_iterator(dir, ec)) {
       if (!entry.is_regular_file(ec)) continue;
       if (!entry.path().filename().string().ends_with(".desktop")) continue;
 
-      std::string id = xdgpp::DesktopFile::relativeId(entry.path(), dir);
+      std::string const id = xdgpp::DesktopFile::relativeId(entry.path(), dir);
 
       if (seen.contains(id)) continue;
       seen.insert(id);
@@ -87,8 +126,61 @@ bool XdgAppDatabase::scan(const std::vector<std::filesystem::path> &paths) {
   return true;
 }
 
+AppPtr XdgAppDatabase::findDefaultTerminalFromSpec() const {
+  std::unordered_set<std::string> seen;
+  std::unordered_set<std::string> excluded;
+  std::vector<std::string> selected;
+  std::error_code ec;
+
+  // we store app + action as "app.action" unlike the spec that uses "app:action"
+  auto toMapKey = [](const xdgpp::XdgTerminalEntry &e) -> std::string {
+    if (e.actionId) return std::string(e.entryId) + "." + std::string(*e.actionId);
+    return std::string(e.entryId);
+  };
+
+  for (const auto &path : xdgpp::xdgTerminalsListPaths()) {
+    if (!fs::is_regular_file(path, ec)) continue;
+
+    xdgpp::parseXdgTerminalsList(path,
+                                 [&](xdgpp::XdgTerminalEntry entry, xdgpp::XdgTerminalSelectionState state) {
+                                   auto key = toMapKey(entry);
+                                   if (seen.contains(key)) return;
+                                   seen.emplace(key);
+
+                                   switch (state) {
+                                   case xdgpp::XdgTerminalSelectionState::Selected:
+                                     selected.emplace_back(std::move(key));
+                                     break;
+                                   case xdgpp::XdgTerminalSelectionState::FallbackExcluded:
+                                     excluded.emplace(std::move(key));
+                                     break;
+                                   case xdgpp::XdgTerminalSelectionState::FallbackProtected:
+                                     break;
+                                   }
+                                 });
+  }
+
+  for (const auto &key : selected) {
+    if (auto it = appMap.find(key.c_str()); it != appMap.end()) {
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
+      auto &xdgApp = static_cast<XdgApplication &>(*it->second);
+      if (xdgApp.isTerminalEmulator() && !xdgApp.data().deleted()) { return it->second; }
+    }
+  }
+
+  for (const auto &app : m_apps) {
+    if (!excluded.contains(app->id().toStdString()) && app->isTerminalEmulator() && !app->data().deleted() &&
+        app->data().matchesCurrentDesktop()) {
+      return app;
+    }
+  }
+
+  return nullptr;
+}
+
 AppPtr XdgAppDatabase::terminalEmulator() const {
-  if (auto emulator = defaultForMime("x-scheme-handler/terminal")) { return emulator; }
+  if (auto emulator = findDefaultTerminalFromSpec()) return emulator;
+  if (auto emulator = defaultForMime(FALLBACK_TERMINAL_MIME)) { return emulator; }
 
   auto terms = m_apps | std::views::filter([](auto &&app) { return app->isTerminalEmulator(); });
   auto findWithProg = [&](const QString &prog) -> std::optional<AppPtr> {
@@ -155,6 +247,31 @@ AppPtr XdgAppDatabase::webBrowser() const {
   return nullptr;
 }
 
+bool XdgAppDatabase::showInFileBrowser(const fs::path &path, bool select) const {
+  auto const browser = fileBrowser();
+  if (!browser) { return false; }
+
+  if (!select) { return launch(*browser, {path.c_str()}); }
+
+  std::error_code ec;
+  if (fs::exists(path, ec) && revealInFileManager(path)) { return true; }
+
+  auto target = containingFolderTarget(path);
+  if (!target) { return false; }
+
+  // These file managers don't work correctly when they're passed a file path.
+  // We work around this by passing the parent folder path instead.
+  static const std::set<QString> exceptions = {"org.kde.dolphin.desktop", "ranger.desktop"};
+
+  if (exceptions.contains(browser->id())) {
+    if (auto parentPath = target->parent_path(); !parentPath.empty() && *target == path) {
+      return launch(*browser, {parentPath.c_str()});
+    }
+  }
+
+  return launch(*browser, {target->c_str()});
+}
+
 std::vector<fs::path> XdgAppDatabase::defaultSearchPaths() const { return xdgpp::appDirs(); }
 
 AppPtr XdgAppDatabase::findById(const QString &id) const {
@@ -214,7 +331,7 @@ std::vector<AppPtr> XdgAppDatabase::findAssociations(const QString &mimeName) co
 
       if (auto it = m_dataDirToApps.find(dataDir); it != m_dataDirToApps.end()) {
         for (const auto &app : it->second) {
-          std::string appId = app->id().toStdString();
+          std::string const appId = app->id().toStdString();
           if (removed.contains(appId) || seen.contains(appId)) continue;
           if (app->data().supportsMime(mime.toStdString())) {
             seen.insert(appId);
@@ -235,7 +352,7 @@ xdgpp::DesktopEntry::TerminalExec XdgAppDatabase::inferTermExec(const XdgApplica
   // new gnome terminal
   if (app.program() == "kgx") { return TExec{.exec = "--", .title = "--title", .dir = "working-directory"}; }
   if (app.program() == "alacritty") {
-    return TExec{
+    return {
         .exec = "-e",
         .appId = "--class",
         .title = "--title",
@@ -245,14 +362,14 @@ xdgpp::DesktopEntry::TerminalExec XdgAppDatabase::inferTermExec(const XdgApplica
   }
   if (app.program() == "cosmic-term") { return TExec{.exec = "-e"}; }
   if (app.program() == "konsole") {
-    return TExec{
+    return {
         .exec = "-e",
         .dir = "--workdir",
         .hold = "--hold",
     };
   }
   if (app.program() == "foot") {
-    return TExec{
+    return {
         .exec = "-e",
         .appId = "--app-id",
         .title = "--title",
@@ -267,8 +384,7 @@ xdgpp::DesktopEntry::TerminalExec XdgAppDatabase::inferTermExec(const XdgApplica
 }
 
 xdgpp::DesktopEntry::TerminalExec XdgAppDatabase::getTermExec(const XdgApplication &app) const {
-  using TExec = xdgpp::DesktopEntry::TerminalExec;
-  return *app.data().terminalExec().or_else([&]() { return std::optional<TExec>{inferTermExec(app)}; });
+  return app.data().terminalExec().value_or(inferTermExec(app));
 }
 
 bool XdgAppDatabase::launchTerminalCommand(const std::vector<QString> &cmdline,
@@ -287,7 +403,8 @@ bool XdgAppDatabase::launchTerminalCommand(const std::vector<QString> &cmdline,
     return false;
   }
 
-  auto xdgApp = static_cast<XdgApplication *>(terminal);
+  auto xdgApp =
+      static_cast<XdgApplication *>(terminal); // NOLINT(cppcoreguidelines-pro-type-static-cast-downcast)
 
   auto exec = xdgApp->parseExec({}, prefix);
 
@@ -310,7 +427,7 @@ bool XdgAppDatabase::launchTerminalCommand(const std::vector<QString> &cmdline,
   return launchProcess(exec.front(), argv, xdgApp->data().workingDirectory());
 }
 
-bool XdgAppDatabase::launchProcess(const QString &prog, const QStringList args,
+bool XdgAppDatabase::launchProcess(const QString &prog, const QStringList &args,
                                    const std::optional<std::filesystem::path> &workingDirectory) const {
   QProcess process;
   process.setProgram(prog);
@@ -318,7 +435,7 @@ bool XdgAppDatabase::launchProcess(const QString &prog, const QStringList args,
   process.setStandardOutputFile(QProcess::nullDevice());
   process.setStandardErrorFile(QProcess::nullDevice());
 
-  if (auto dir = workingDirectory) { process.setWorkingDirectory(workingDirectory->c_str()); }
+  if (workingDirectory) { process.setWorkingDirectory(workingDirectory->c_str()); }
 
   QStringList cmdline;
   cmdline << prog << args;
@@ -334,7 +451,8 @@ bool XdgAppDatabase::launchProcess(const QString &prog, const QStringList args,
 
 bool XdgAppDatabase::launch(const AbstractApplication &app, const std::vector<QString> &args,
                             const std::optional<QString> &launchPrefix) const {
-  auto &xdgApp = static_cast<const XdgApplication &>(app);
+  auto &xdgApp =
+      static_cast<const XdgApplication &>(app); // NOLINT(cppcoreguidelines-pro-type-static-cast-downcast)
 
   if (auto url = xdgApp.data().url().transform(QString::fromStdString)) {
     auto opener = findDefaultOpener(*url);
@@ -365,7 +483,7 @@ QString XdgAppDatabase::mimeNameForTarget(const QString &target) const {
   QString source = target;
 
   {
-    QUrl url(source);
+    QUrl const url(source);
 
     if (!url.scheme().isEmpty()) { return "x-scheme-handler/" + url.scheme(); }
   }

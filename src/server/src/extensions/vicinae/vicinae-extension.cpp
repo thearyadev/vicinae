@@ -3,12 +3,13 @@
 #include "command-controller.hpp"
 #include "services/script-command/script-command-service.hpp"
 #include "extensions/vicinae/list-installed-extensions-command.hpp"
-#include "extensions/vicinae/oauth-token-store/oauth-token-store-view.hpp"
+#include "qml/oauth-token-store-view-host.hpp"
 #include "extensions/vicinae/report-bug-command.hpp"
-#include "extensions/vicinae/browse-icons/search-builtin-icons-view.hpp"
-
+#include "qml/builtin-icons-view-host.hpp"
+#include "services/telemetry/telemetry-service.hpp"
 #include "navigation-controller.hpp"
-#include "local-storage/browse-local-storage.hpp"
+#include "config/config.hpp"
+#include "qml/local-storage-view-host.hpp"
 #include "open-about-command.hpp"
 #include "refresh-apps-command.hpp"
 #include "configure-fallback-command.hpp"
@@ -134,7 +135,7 @@ class OpenSettingsCommand : public BuiltinCallbackCommand {
   ImageURL iconUrl() const override {
     return ImageURL::builtin("cog").setBackgroundTint(Omnicast::ACCENT_COLOR);
   }
-  bool isDefaultDisabled() const override { return true; }
+  std::vector<QString> keywords() const override { return {"preferences"}; }
 
   void execute(CommandController *controller) const override {
     auto ctx = controller->context();
@@ -172,11 +173,46 @@ class OpenKeybindSettingsCommand : public BuiltinCallbackCommand {
     auto ctx = controller->context();
 
     ctx->navigation->closeWindow();
-    ctx->settings->openTab("keybinds");
+    ctx->settings->openTab("shortcuts");
   }
 };
 
-class OAuthTokenStoreCommand : public BuiltinViewCommand<OAuthTokenStoreView> {
+class ForgetTelemetryCommand : public BuiltinCallbackCommand {
+  QString id() const override { return "forget-telemetry"; }
+  QString name() const override { return "Forget Past Vicinae Telemetry"; }
+  QString description() const override {
+    return "Asks the vicinae server to anonymize telemetry data that was sent with your vicinae instance ID "
+           "attached. The ID is only linked to your vicinae install, which has no direct relationship with "
+           "your system.";
+  }
+
+  ImageURL iconUrl() const override {
+    return ImageURL(BuiltinIcon::XMarkCircle).setBackgroundTint(Omnicast::ACCENT_COLOR);
+  }
+
+  bool isDefaultDisabled() const override { return true; }
+
+  void execute(CommandController *controller) const override {
+    auto ctx = controller->context();
+    auto toast = ctx->services->toastService();
+    auto telemetry = ctx->services->telemetry();
+    auto config = ctx->services->config();
+
+    ctx->navigation->showWindow();
+    ctx->navigation->setSearchText(">"); // force to exit out of compact mode if it is enabled
+    toast->dynamic("Processing...");
+    telemetry->forget().then([toast, config](bool ok) {
+      if (ok) {
+        config->mergeWithUser({.telemetry = config::Partial<config::TelemetryConfig>{.systemInfo = false}});
+        toast->success("Past telemetry was successfully detached from your vicinae user ID.");
+      } else {
+        toast->failure("Failed to forget past telemetry data");
+      }
+    });
+  }
+};
+
+class OAuthTokenStoreCommand : public BuiltinViewCommand<OAuthTokenStoreViewHost> {
   QString id() const override { return "oauth-token-store"; }
   QString name() const override { return "Manage OAuth Token Sets"; }
   QString description() const override {
@@ -189,7 +225,7 @@ class OAuthTokenStoreCommand : public BuiltinViewCommand<OAuthTokenStoreView> {
   }
 };
 
-class IconBrowserCommand : public BuiltinViewCommand<SearchBuiltinIconView> {
+class IconBrowserCommand : public BuiltinViewCommand<BuiltinIconsViewHost> {
   QString id() const override { return "search-builtin-icons"; }
   QString name() const override { return "Search Builtin Icons"; }
   QString description() const override { return "Search Vicinae builtin set of icons"; }
@@ -200,7 +236,7 @@ class IconBrowserCommand : public BuiltinViewCommand<SearchBuiltinIconView> {
   }
 };
 
-class InspectLocalStorage : public BuiltinViewCommand<BrowseLocalStorageView> {
+class InspectLocalStorage : public BuiltinViewCommand<LocalStorageViewHost> {
   QString id() const override { return "inspect-local-storage"; }
   QString name() const override { return "Inspect Local Storage"; }
   bool isDefaultDisabled() const override { return true; }
@@ -234,4 +270,5 @@ VicinaeExtension::VicinaeExtension() {
   registerCommand<ReloadScriptDirectoriesCommand>();
   registerCommand<PruneMemoryCommand>();
   registerCommand<IconBrowserCommand>();
+  registerCommand<ForgetTelemetryCommand>();
 }

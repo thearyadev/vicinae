@@ -1,6 +1,8 @@
 #include "extend/form-model.hpp"
 #include <qjsonobject.h>
 
+#include <algorithm>
+
 const static std::vector<QString> fieldTypes = {"dropdown-field",   "password-field",    "text-field",
                                                 "checkbox-field",   "date-picker-field", "text-area-field",
                                                 "file-picker-field"};
@@ -14,7 +16,7 @@ FormModel FormModel::fromJson(const QJsonObject &json) {
   model.enableDrafts = props.value("enableDrafts").toBool(false);
 
   if (props.contains("navigationTitle")) {
-    model.navigationTitle = props.value("navigationTtile").toString();
+    model.navigationTitle = props.value("navigationTitle").toString();
   }
 
   model.items.reserve(children.size());
@@ -28,14 +30,14 @@ FormModel FormModel::fromJson(const QJsonObject &json) {
     if (type == "action-panel") {
       model.actions = ActionPannelParser().parse(obj);
     } else if (type == "separator") {
-      model.items.push_back(Separator{});
+      model.items.emplace_back(Separator{});
     } else if (type == "form-description") {
       Description desc;
 
       desc.text = props.value("text").toString();
       if (props.contains("title")) desc.title = props.value("title").toString();
 
-      model.items.push_back(desc);
+      model.items.emplace_back(desc);
 
     } else if (type == "link-accessory") {
       FormModel::LinkAccessoryModel link;
@@ -43,7 +45,7 @@ FormModel FormModel::fromJson(const QJsonObject &json) {
       link.target = props.value("target").toString();
       model.searchBarAccessory = link;
 
-    } else if (auto it = std::find(fieldTypes.begin(), fieldTypes.end(), type); it != fieldTypes.end()) {
+    } else if (auto it = std::ranges::find(fieldTypes, type); it != fieldTypes.end()) {
       FieldBase base;
 
       if (!props.contains("id")) {
@@ -52,7 +54,7 @@ FormModel FormModel::fromJson(const QJsonObject &json) {
       }
 
       base.id = props.value("id").toString();
-      base.storeValue = props.value("storeValue").toBool();
+      base.storeValue = props.value("storeValue").toBool(true);
       base.autoFocus = props.value("autoFocus").toBool();
 
       if (props.contains("title")) base.title = props.value("title").toString();
@@ -67,9 +69,13 @@ FormModel FormModel::fromJson(const QJsonObject &json) {
       qDebug() << "registered" << base.id << base.onChange;
 
       if (*it == "text-field") {
-        model.items.emplace_back(std::make_shared<TextField>(base));
+        auto tf = std::make_shared<TextField>(base);
+        if (props.contains("placeholder")) tf->m_placeholder = props.value("placeholder").toString();
+        model.items.emplace_back(tf);
       } else if (*it == "password-field") {
-        model.items.emplace_back(std::make_shared<PasswordField>(base));
+        auto pf = std::make_shared<PasswordField>(base);
+        if (props.contains("placeholder")) pf->m_placeholder = props.value("placeholder").toString();
+        model.items.emplace_back(pf);
       } else if (*it == "checkbox-field") {
         auto checkbox = std::make_shared<CheckboxField>(base);
         if (props.contains("label")) checkbox->m_label = props.value("label").toString();
@@ -82,7 +88,7 @@ FormModel FormModel::fromJson(const QJsonObject &json) {
         model.items.emplace_back(dp);
       } else if (*it == "text-area-field") {
         auto ta = std::make_shared<TextAreaField>(base);
-        if (props.contains("placeholder")) ta->placeholder = props.value("placeholder").toString();
+        if (props.contains("placeholder")) ta->m_placeholder = props.value("placeholder").toString();
         model.items.emplace_back(ta);
       } else if (*it == "dropdown-field") {
         auto dropdown = std::make_shared<DropdownField>(base);
@@ -91,6 +97,7 @@ FormModel FormModel::fromJson(const QJsonObject &json) {
         dropdown->throttle = props.value("throttle").toBool(false);
         dropdown->isLoading = props.value("isLoading").toBool(false);
 
+        if (props.contains("placeholder")) dropdown->m_placeholder = props.value("placeholder").toString();
         if (props.contains("tooltip")) { dropdown->tooltip = props.value("tooltip").toString(); }
 
         if (props.contains("onSearchTextChange"))

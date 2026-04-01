@@ -20,10 +20,10 @@ public:
   QString m_id;
   QString m_title;
   QString m_wmClass;
-  int m_pid;
+  WaylandWindowManager *m_manager;
   bool m_active;
   struct zwlr_foreign_toplevel_handle_v1 *m_handle;
-  WaylandWindowManager *m_manager;
+  int m_pid;
 };
 
 class WaylandWindowManager : public AbstractWindowManager {
@@ -33,11 +33,11 @@ public:
   WindowList listWindowsSync() const override;
 
   AbstractWindowManager::WindowPtr getFocusedWindowSync() const override;
+  bool supportsFocusTracking() const override { return true; }
+  bool focusNullsOnLayerGrab() const override { return true; }
   void focusWindowSync(const AbstractWindow &window) const override;
   bool closeWindow(const AbstractWindow &window) const override;
 
-  bool supportsPaste() const override;
-  bool pasteToWindow(const AbstractWindow *window, const AbstractApplication *app) override;
   bool ping() const override;
   bool isActivatable() const override;
 

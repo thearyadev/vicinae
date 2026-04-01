@@ -15,8 +15,8 @@
 #include "common/qt.hpp"
 #include "types.hpp"
 
-using ServerSchema = ipc::RpcSchema<ipc::DMenu, ipc::Deeplink, ipc::Ping, ipc::LaunchApp, ipc::BrowserInit,
-                                    ipc::BrowserTabsChanged>;
+using ServerSchema = ipc::RpcSchema<ipc::DMenu, ipc::Deeplink, ipc::Ping, ipc::LaunchApp, ipc::Describe,
+                                    ipc::BrowserInit, ipc::BrowserTabsChanged>;
 
 using Watcher = QFutureWatcher<glz::raw_json>;
 
@@ -125,7 +125,7 @@ private:
  */
 class IpcCommandServer : public QObject {
 public:
-  IpcCommandServer(ApplicationContext *ctx, QWidget *parent = nullptr);
+  IpcCommandServer(ApplicationContext *ctx, QObject *parent = nullptr);
   bool start(const std::filesystem::path &localPath);
 
 private:
@@ -138,6 +138,6 @@ private:
   QLocalServer m_server;
   std::vector<ClientInfo> m_clients;
 
-  RpcServer<ServerSchema, IpcContext> m_rpc;
   ApplicationContext &m_ctx;
+  RpcServer<ServerSchema, IpcContext> m_rpc;
 };

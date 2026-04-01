@@ -45,7 +45,7 @@ clip_proto::Response *ClipboardRequestRouter::readContent(const clip_proto::Read
 clip_proto::Response *ClipboardRequestRouter::clear(const clip_proto::ClearRequest &req) {
   auto res = new clip_proto::Response;
 
-  QApplication::clipboard()->clear();
+  QGuiApplication::clipboard()->clear();
   res->set_allocated_clear(new clip_proto::ClearResponse());
 
   return res;
@@ -53,7 +53,7 @@ clip_proto::Response *ClipboardRequestRouter::clear(const clip_proto::ClearReque
 
 clip_proto::Response *ClipboardRequestRouter::paste(const clip_proto::PasteToClipboardRequest &req) {
   auto content = parseProtoClipboardContent(req.content());
-  m_clipboard.pasteContent(content);
+  m_paste.pasteContent(content);
 
   auto resData = new clip_proto::PasteToClipboardResponse;
   auto res = new clip_proto::Response;
@@ -65,7 +65,7 @@ clip_proto::Response *ClipboardRequestRouter::paste(const clip_proto::PasteToCli
 
 clip_proto::Response *ClipboardRequestRouter::copy(const clip_proto::CopyToClipboardRequest &req) {
   auto content = parseProtoClipboardContent(req.content());
-  bool concealed = req.options().concealed();
+  bool const concealed = req.options().concealed();
 
   m_clipboard.copyContent(content, {.concealed = concealed});
 
@@ -105,4 +105,5 @@ proto::ext::extension::Response *ClipboardRequestRouter::route(const clip_proto:
   return nullptr;
 }
 
-ClipboardRequestRouter::ClipboardRequestRouter(ClipboardService &clipboard) : m_clipboard(clipboard) {}
+ClipboardRequestRouter::ClipboardRequestRouter(ClipboardService &clipboard, PasteService &paste)
+    : m_clipboard(clipboard), m_paste(paste) {}
