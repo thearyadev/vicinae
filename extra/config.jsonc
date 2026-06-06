@@ -19,6 +19,14 @@
 		"system_info": true
 	},
 
+	// Input monitoring/injection binary required to handle "paste to active window" actions and snippet expansion.
+	// If disabled, Vicinae will automatically fallback on copy instead of paste, and keyword expansion for snippets will no longer work.
+	// Note that conceptually, the input server is not uniquely related to snippets, so disabling snippets will not shutdown the input server process:
+	// only this key can.
+	"input_server": {
+		"enabled": true
+	},
+
 	// Whether root search should also search files directly.
 	// File search is performed asynchrounously: files may take an instant to appear after a query is entered.
 	// Turning this on results in an increase in CPU usage when searching.
@@ -92,32 +100,32 @@
 	"launcher_window": {
 		// Control the opacity of the main window.
 		// Opacity for other surfaces are controlled by the active theme.
-		"opacity": 0.95,
+		// [0;1]
+		"opacity": 1.0,
 		
 		// Blur the window background.
-		// Only suported on Hyprland for now.
-		// May require a server restart to disable properly.
+		// Supported on wayland compositors that implement ext-background-effect
+		// Make sure the window opacity above is < 1
 		"blur": {
 			"enabled": true
 		},
-
-		// Dims everything behind the vicinae window.
-		// Only supported on Hyprland for now.
-		// May require a server restart to disable properly.
-		"dim_around": true,
 
 		// You can turn client side decorations off if you want to let your compositor draw the rounded
 		// borders and such. This usually gives better results, but is more complicated to setup, if at all possible.
 		"client_side_decorations": {
 			"enabled": true,
 			"rounding": 10,
-			"border_width": 1
+			"border_width": 1,
+
+			// Draws drop shadows on the client side, ONLY if we are a layer surface.
+			// We assume that non layer surfaces may already have drop shadows drawn by the compositor.
+			// In order to play well with blur, we do NOT allow drop shadows if the compositor doesn't support
+			// the ext-background-effect protocol (which allows defining a specific region to blur).
+			"shadow_size": 12
 		},
 
 		// In compact mode, vicinae only shows a search bar in the root search if no query is entered, only expanding to its full size when searching.
 		// WARNING: compact mode works best when vicinae is rendered as a layer surface (the default if available), as opposed to a regular floating window.
-		// That's because the part that is not rendered in compact mode is still part of the full window size, allowing the window to be gracefully expanded without having to deal
-		// with a compositor window resize which can generate a lot of visual noise. Server side borders and blur will look notably out of place.
 		"compact_mode": {
 			"enabled": false
 		},

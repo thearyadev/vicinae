@@ -1,7 +1,8 @@
 #include "telemetry-service.hpp"
 #include "config/config.hpp"
 #include "environment.hpp"
-#include "version.h"
+#include "generated/version.h"
+#include "utils.hpp"
 #include "vicinae.hpp"
 #include "xdgpp/env/env.hpp"
 #include <QGuiApplication>
@@ -15,9 +16,11 @@
 #include <glaze/json/read.hpp>
 #include <glaze/json/write.hpp>
 #include <qlogging.h>
+#include <qstandardpaths.h>
 #include <qsysinfo.h>
 #include <qtversionchecks.h>
 #include <ranges>
+#include <system_error>
 
 namespace fs = std::filesystem;
 
@@ -36,8 +39,14 @@ TelemetryService::TelemetryService(config::Manager &config) : m_config(config) {
   m_timer.setInterval(1h);
 }
 
-void TelemetryService::setEnabled(bool enabled) {
-  if (enabled) {
+void TelemetryService::setEnabled(bool v) {
+  static std::optional<bool> enabled;
+
+  if (enabled.has_value() && enabled.value() == v) return;
+
+  enabled = v;
+
+  if (enabled.value()) {
     qInfo().noquote() << "Anonymous telemetry is enabled. Learn more:" << Omnicast::DOC_TELEMETRY_URL;
     m_timer.start();
     trySendSystemInfo();
@@ -82,7 +91,7 @@ void TelemetryService::sendSystemInfo() {
   payload.operatingSystem = QSysInfo::kernelType().toStdString();
   payload.chassisType = Environment::chassisType();
   payload.kernelVersion = QSysInfo::kernelVersion().toStdString();
-  payload.productId = QSysInfo::productType().toStdString();
+  payload.productId = determineProductId();
   payload.productVersion = QSysInfo::productVersion().toStdString();
   payload.qtVersion = QT_VERSION_STR;
 
@@ -110,7 +119,22 @@ std::string TelemetryService::generateUserId() {
   return QString("user-%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)).toStdString();
 }
 
+std::string TelemetryService::determineProductId() const {
+  std::error_code ec;
+
+  // omarchy doesn't override /etc/os-release so it is counted as arch
+  // it is very useful to have omarchy be its own distinct demographic, especially since
+  // a lot of the users come from macOS and expect a replacement for Raycast.
+  if (fs::is_directory(xdgpp::dataHome() / "omarchy", ec)) { return "omarchy"; }
+
+  return QSysInfo::productType().toStdString();
+}
+
 void TelemetryService::saveState() {
+  std::error_code ec;
+
+  fs::create_directories(m_statePath.parent_path(), ec);
+
   if (auto const error = glz::write_file_json(m_state, m_statePath.c_str(), m_buf)) {
     qWarning() << "Failed to write telemetry state file at" << m_statePath.c_str()
                << glz::format_error(error);

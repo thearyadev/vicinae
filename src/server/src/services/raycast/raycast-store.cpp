@@ -1,6 +1,6 @@
 #include "raycast-store.hpp"
 #include "environment.hpp"
-#include "lib/glaze-qt.hpp"
+#include "internal/glaze-qt.hpp"
 
 RaycastStoreService::RaycastStoreService() {
   m_client.setBaseUrl(QStringLiteral("https://backend.raycast.com/api/v1"));
@@ -13,13 +13,29 @@ const http::RequestOptions RaycastStoreService::s_requestOpts = {
     .contentType = QStringLiteral("application/json"),
 };
 
+void RaycastStoreService::postProcess(Raycast::Extension &ext) {
+  ext.id = QString("store.raycast.%1").arg(ext.name);
+  for (auto &cmd : ext.commands) {
+    cmd.extensionIcons = ext.icons;
+  }
+}
+
 void RaycastStoreService::postProcess(std::vector<Raycast::Extension> &extensions) {
   for (auto &ext : extensions) {
-    ext.id = QString("store.raycast.%1").arg(ext.name);
-    for (auto &cmd : ext.commands) {
-      cmd.extensionIcons = ext.icons;
-    }
+    postProcess(ext);
   }
+}
+
+QFuture<Raycast::ExtensionResult> RaycastStoreService::fetchExtension(const QString &author,
+                                                                      const QString &name) {
+  auto url = QString("/extensions/%1/%2").arg(author, name);
+
+  return m_client.get<Raycast::Extension>(url, s_requestOpts)
+      .then([](http::Client::Result<Raycast::Extension> result) -> Raycast::ExtensionResult {
+        if (!result) return std::unexpected(result.error());
+        postProcess(*result);
+        return *std::move(result);
+      });
 }
 
 QFuture<Raycast::ListResult> RaycastStoreService::search(const QString &query) {

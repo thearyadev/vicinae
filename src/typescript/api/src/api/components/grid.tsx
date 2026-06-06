@@ -4,6 +4,7 @@ import { randomUUID } from "crypto";
 import { EmptyView } from "./empty-view";
 import { type ColorLike, serializeColorLike } from "../color";
 import { Dropdown } from "./dropdown";
+import { useEventCounted } from "../hooks/use-event-counted";
 
 enum GridInset {
 	Zero = "zero",
@@ -155,9 +156,9 @@ export namespace Grid {
 			keywords?: string[];
 			icon?: ImageLike;
 			content:
-			| Image.ImageLike
-			| { color: ColorLike }
-			| { value: Image.ImageLike | { color: ColorLike }; tooltip?: string };
+				| Image.ImageLike
+				| { color: ColorLike }
+				| { value: Image.ImageLike | { color: ColorLike }; tooltip?: string };
 			id?: string;
 			subtitle?: string;
 			actions?: ReactNode;
@@ -179,6 +180,8 @@ const GridRoot: React.FC<Grid.Props> = ({
 	itemSize,
 	fit = GridFit.Contain,
 	aspectRatio = "1",
+	searchText,
+	onSearchTextChange,
 	...props
 }) => {
 	if (
@@ -196,11 +199,18 @@ const GridRoot: React.FC<Grid.Props> = ({
 		}[itemSize];
 	}
 
+	const [countedSearchText, wrappedOnSearchTextChange] = useEventCounted(
+		searchText,
+		onSearchTextChange,
+	);
+
 	return (
 		<grid
 			fit={fit}
 			inset={inset}
 			aspectRatio={aspectRatioMap[aspectRatio]}
+			searchText={countedSearchText}
+			onSearchTextChange={wrappedOnSearchTextChange}
 			{...props}
 		>
 			{searchBarAccessory}
@@ -247,11 +257,11 @@ const GridItem: React.FC<Grid.Item.Props> = ({
 	// Accessory
 	const serializedAccessory = accessory
 		? {
-			icon: accessory.icon
-				? serializeProtoImage(accessory.icon)
-				: accessory.icon,
-			tooltip: accessory.tooltip,
-		}
+				icon: accessory.icon
+					? serializeProtoImage(accessory.icon)
+					: accessory.icon,
+				tooltip: accessory.tooltip,
+			}
 		: undefined;
 
 	return (

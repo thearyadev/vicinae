@@ -3,7 +3,7 @@
 #include <utility>
 
 PlaceholderString PlaceholderString::parseSnippetText(const QString &link) {
-  return parse(link, std::vector<QString>{"uuid", "clipboard", "date", "cursor"});
+  return parse(link, std::vector<QString>{"uuid", "clipboard", "date", "cursor", "shell"});
 }
 
 PlaceholderString PlaceholderString::parseShortcutText(const QString &link) {
@@ -12,7 +12,16 @@ PlaceholderString PlaceholderString::parseShortcutText(const QString &link) {
 
 PlaceholderString PlaceholderString::parse(const QString &link, std::span<const QString> reserved) {
   PlaceholderString pstr;
-  enum class State : std::uint8_t { BkNormal, PhId, PhKeyStart, PhKey, PhValueStart, PhValue, PhValueQuoted };
+  enum class State : std::uint8_t {
+    BkNormal,
+    BkEscape,
+    PhId,
+    PhKeyStart,
+    PhKey,
+    PhValueStart,
+    PhValue,
+    PhValueQuoted
+  };
   using enum State;
   State state = BkNormal;
   size_t i = 0;
@@ -23,17 +32,24 @@ PlaceholderString PlaceholderString::parse(const QString &link, std::span<const 
   const auto insertPlaceholder = [&](const ParsedPlaceholder &placeholder) {
     bool const isReserved =
         std::ranges::any_of(reserved, [&](const QString &s) { return s == placeholder.id; });
+    bool const isArgument = !isReserved || placeholder.id == "argument";
 
-    if (placeholder.id == "argument") {
+    if (isArgument) {
       Argument arg;
-      if (auto it = placeholder.args.find("name"); it != placeholder.args.end()) { arg.name = it->second; }
-      if (auto it = placeholder.args.find("default"); it != placeholder.args.end()) {
-        arg.defaultValue = it->second;
+
+      if (placeholder.id == "argument") {
+        if (auto it = placeholder.args.find("name"); it != placeholder.args.end()) { arg.name = it->second; }
+        if (auto it = placeholder.args.find("default"); it != placeholder.args.end()) {
+          arg.defaultValue = it->second;
+        }
+      } else if (!isReserved) {
+        arg.name = placeholder.id;
       }
 
-      pstr.m_args.emplace_back(arg);
-    } else if (!isReserved) {
-      pstr.m_args.emplace_back(Argument(placeholder.id));
+      // an argument is always identified by its name and can be expanded in multiple places
+      if (!std::ranges::any_of(pstr.m_args, [&](auto &&a) { return arg.name == a.name; })) {
+        pstr.m_args.emplace_back(arg);
+      }
     }
 
     pstr.m_placeholders.emplace_back(placeholder);
@@ -49,11 +65,25 @@ PlaceholderString PlaceholderString::parse(const QString &link, std::span<const 
 
     switch (state) {
     case BkNormal:
+      if (ch == '\\') {
+        pstr.m_parts.emplace_back(link.sliced(startPos, i - startPos));
+        state = BkEscape;
+        break;
+      }
       if (ch == '{') {
         pstr.m_parts.emplace_back(link.sliced(startPos, i - startPos));
         state = PhId;
         startPos = i + 1;
       }
+      break;
+    case BkEscape:
+      if (ch == '\\') {
+        pstr.m_parts.emplace_back(QStringLiteral("\\"));
+        startPos = i + 1;
+      } else {
+        startPos = i;
+      }
+      state = BkNormal;
       break;
     case PhId:
       if (!ch.isLetterOrNumber()) {
@@ -117,6 +147,8 @@ PlaceholderString PlaceholderString::parse(const QString &link, std::span<const 
 
   if (state == BkNormal && i - startPos > 0) {
     pstr.m_parts.emplace_back(link.sliced(startPos, i - startPos));
+  } else if (state == BkEscape) {
+    pstr.m_parts.emplace_back(QStringLiteral("\\"));
   }
 
   return pstr;

@@ -1,7 +1,6 @@
 #pragma once
 #include "extend/model-parser.hpp"
 #include "extension/extension-action-panel-builder.hpp"
-#include "extension/extension-command-controller.hpp"
 #include "bridge-view.hpp"
 #include "extension-form-model.hpp"
 #include "extension-grid-model.hpp"
@@ -25,7 +24,7 @@ class ExtensionViewHost : public ViewHostBase {
   Q_PROPERTY(QString dropdownPlaceholder READ dropdownPlaceholder NOTIFY dropdownChanged)
 
 public:
-  explicit ExtensionViewHost(ExtensionCommandController *controller, QObject *parent = nullptr);
+  explicit ExtensionViewHost(ExtensionActionPanelBuilder::NotifyFn notify, QObject *parent = nullptr);
 
   QUrl qmlComponentUrl() const override;
   QUrl qmlSearchAccessoryUrl() const override;
@@ -34,6 +33,7 @@ public:
   void onReactivated() override;
 
   void render(const RenderModel &model);
+  void setActions(std::unique_ptr<ActionPanelState> actions) override;
 
   void textChanged(const QString &text) override;
   bool inputFilter(QKeyEvent *event) override;
@@ -81,13 +81,14 @@ private:
   void notifyExtension(const QString &handler, const QJsonArray &args);
   void handleDebouncedSearch();
   void updateDropdown(const DropdownModel *dropdown);
+  void applyControlledSearchText(const EventCounted<std::string> &incoming);
 
   template <typename T> T *activeModel() const {
     auto p = std::get_if<T *>(&m_model);
     return p ? *p : nullptr;
   }
 
-  ExtensionCommandController *m_controller;
+  ExtensionActionPanelBuilder::NotifyFn m_notify;
   ViewModel m_model;
   int m_renderIndex = -1;
   QTimer *m_searchDebounce;
@@ -97,11 +98,11 @@ private:
 
   bool m_throttle = false;
   bool m_filtering = false;
+  bool m_settingSearchText = false;
+  uint32_t m_searchEventCount = 0;
   std::optional<std::string> m_onSearchTextChange;
   bool m_shouldResetSelection = false;
   bool m_selectFirstOnReset = true;
-
-  mutable ExtensionActionPanelBuilder::SubmenuCache m_submenuCache;
 
   std::optional<ActionPannelModel> m_formActions;
   QString m_linkAccessoryText;
@@ -111,5 +112,5 @@ private:
   QVariant m_dropdownCurrentItem;
   QString m_dropdownValue;
   QString m_dropdownPlaceholder;
-  std::optional<QString> m_dropdownOnChange;
+  std::optional<std::string> m_dropdownOnChange;
 };

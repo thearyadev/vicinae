@@ -4,13 +4,16 @@
 #include "extend/metadata-model.hpp"
 #include "image-url.hpp"
 #include "ui/image/url.hpp"
-#include <QString>
 #include <QMimeDatabase>
+#include <QString>
 #include <QVariantList>
+#include <cstdint>
 #include <filesystem>
 #include <vector>
 
 namespace qml {
+
+inline constexpr int64_t MAX_PREVIEW_SIZE = 2 * 1024 * 1024;
 
 struct FilePreviewContent {
   QString mimeType;
@@ -25,17 +28,17 @@ QVariantList accessoriesToVariantList(const std::vector<AccessoryModel> &accesso
 QVariantMap accessoryToVariant(const AccessoryModel &acc);
 
 inline QVariantList textAccessory(const QString &text) {
-  return accessoriesToVariantList({{.data = AccessoryModel::Text{{}, text}}});
+  return accessoriesToVariantList({{.data = AccessoryModel::Text{{}, text.toStdString()}}});
 }
 
-inline QString imageSourceFor(const ImageURL &url) { return ImageUrl(url).toSource(); }
+inline QString imageSourceFor(const ImageURL &url) { return url.toString(); }
 
 inline std::optional<QString> firstDropdownItemValue(const std::vector<DropdownModel::Child> &children) {
   for (const auto &child : children) {
     if (auto *item = std::get_if<DropdownModel::Item>(&child)) {
-      return item->value;
+      return QString::fromStdString(item->value);
     } else if (auto *section = std::get_if<DropdownModel::Section>(&child)) {
-      if (!section->items.empty()) return section->items[0].value;
+      if (!section->items.empty()) return QString::fromStdString(section->items[0].value);
     }
   }
   return std::nullopt;
@@ -48,8 +51,8 @@ inline QVariantList convertDropdownChildren(const std::vector<DropdownModel::Chi
   for (const auto &child : children) {
     if (auto *item = std::get_if<DropdownModel::Item>(&child)) {
       QVariantMap m;
-      m["id"] = item->value;
-      m["displayName"] = item->title;
+      m["id"] = QString::fromStdString(item->value);
+      m["displayName"] = QString::fromStdString(item->title);
       m["iconSource"] = item->icon ? imageSourceFor(ImageURL(*item->icon)) : QString();
       unsectioned.append(m);
     } else if (auto *section = std::get_if<DropdownModel::Section>(&child)) {
@@ -61,12 +64,12 @@ inline QVariantList convertDropdownChildren(const std::vector<DropdownModel::Chi
         unsectioned.clear();
       }
       QVariantMap sectionMap;
-      sectionMap["title"] = section->title;
+      sectionMap["title"] = QString::fromStdString(section->title);
       QVariantList sectionItems;
       for (const auto &si : section->items) {
         QVariantMap m;
-        m["id"] = si.value;
-        m["displayName"] = si.title;
+        m["id"] = QString::fromStdString(si.value);
+        m["displayName"] = QString::fromStdString(si.title);
         m["iconSource"] = si.icon ? imageSourceFor(ImageURL(*si.icon)) : QString();
         sectionItems.append(m);
       }

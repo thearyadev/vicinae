@@ -1,5 +1,5 @@
 #pragma once
-#include "lib/fuzzy/fuzzy-searchable.hpp"
+#include "fuzzy/fuzzy-searchable.hpp"
 #include <QAbstractListModel>
 #include <QString>
 #include <vector>
@@ -22,7 +22,8 @@ public:
     AliasRole,
     EntrypointIdRole,
     DescriptionRole,
-    HasPreferencesRole
+    HasPreferencesRole,
+    ShortcutRole
   };
 
   struct Command {
@@ -34,6 +35,9 @@ public:
     bool hasPreferences;
     QString alias;
     QString entrypointId;
+    QString shortcut;
+
+    bool operator==(const Command &) const = default;
   };
 
   explicit ProviderCommandModel(QObject *parent = nullptr);
@@ -49,6 +53,7 @@ public:
   bool setEnabled(const QString &entrypointId, bool value);
   void setAllEnabled(bool value);
   bool setAlias(const QString &entrypointId, const QString &alias);
+  bool setShortcut(const QString &entrypointId, const QString &shortcut);
 
   Q_INVOKABLE int findByEntrypointId(const QString &id) const;
   Q_INVOKABLE void setFilter(const QString &text);

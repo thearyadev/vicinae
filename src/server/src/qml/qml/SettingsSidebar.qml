@@ -33,6 +33,9 @@ Item {
         } else {
             _highlightedIndex = Math.max(0, Math.min(_navItems.length - 1, _highlightedIndex + delta));
         }
+        const listIdx = _highlightedListIndex();
+        if (listIdx >= 0)
+            navList.positionViewAtIndex(listIdx, ListView.Contain);
     }
 
     function _activateHighlighted() {
@@ -50,73 +53,85 @@ Item {
         anchors.fill: parent
         spacing: 0
 
-        Rectangle {
+        Item {
             Layout.fillWidth: true
-            Layout.leftMargin: 8
-            Layout.rightMargin: 8
-            Layout.topMargin: 12
-            Layout.bottomMargin: 8
-            height: 28
-            radius: 4
-            color: "transparent"
-            border.color: extSearchField.activeFocus ? Theme.inputBorderFocus : Theme.inputBorder
-            border.width: 1
+            Layout.preferredHeight: 40
 
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 6
-                anchors.rightMargin: 6
-                spacing: 4
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.leftMargin: 8
+                anchors.rightMargin: 8
+                anchors.verticalCenter: parent.verticalCenter
+                height: 28
+                radius: 4
+                color: "transparent"
+                border.color: Config.withAlpha(extSearchField.activeFocus ? Theme.inputBorderFocus : Theme.inputBorder, Config.windowOpacity)
+                border.width: 1
 
-                Image {
-                    source: "image://vicinae/builtin:magnifying-glass?fg=" + Theme.textMuted
-                    sourceSize.width: 12
-                    sourceSize.height: 12
-                    Layout.preferredWidth: 12
-                    Layout.preferredHeight: 12
-                }
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 6
+                    anchors.rightMargin: 6
+                    spacing: 4
 
-                TextInput {
-                    id: extSearchField
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    verticalAlignment: TextInput.AlignVCenter
-                    font.pointSize: Theme.smallerFontSize
-                    color: Theme.foreground
-                    clip: true
-                    focus: true
-                    activeFocusOnTab: true
+                    ViciImage {
+                        source: Img.builtin("magnifying-glass").withFillColor(Theme.textMuted)
+                        sourceSize.width: 12
+                        sourceSize.height: 12
+                        Layout.preferredWidth: 12
+                        Layout.preferredHeight: 12
+                    }
 
-                    Connections {
-                        target: settings
-                        function onDefaultFocusRequested() {
-                            extSearchField.forceActiveFocus();
+                    TextInput {
+                        id: extSearchField
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        verticalAlignment: TextInput.AlignVCenter
+                        font.pointSize: Theme.smallerFontSize
+                        color: Theme.foreground
+                        clip: true
+                        focus: true
+                        activeFocusOnTab: true
+
+                        Connections {
+                            target: settings
+                            function onDefaultFocusRequested() {
+                                extSearchField.forceActiveFocus();
+                            }
                         }
-                    }
 
-                    Text {
-                        anchors.fill: parent
-                        verticalAlignment: Text.AlignVCenter
-                        text: "Search..."
-                        color: Theme.textPlaceholder
-                        font: extSearchField.font
-                        visible: !extSearchField.text
-                    }
+                        Text {
+                            anchors.fill: parent
+                            verticalAlignment: Text.AlignVCenter
+                            text: "Search..."
+                            color: Theme.textPlaceholder
+                            font: extSearchField.font
+                            visible: !extSearchField.text
+                        }
 
-                    onTextChanged: root._highlightedIndex = root._navItems.length > 0 ? 0 : -1
+                        onTextChanged: {
+                            HoverActivation.reset();
+                            root._highlightedIndex = root._navItems.length > 0 ? 0 : -1;
+                        }
 
-                    Keys.onUpPressed: root._navigateHighlight(-1)
-                    Keys.onDownPressed: root._navigateHighlight(1)
-                    Keys.onReturnPressed: root._activateHighlighted()
-                    Keys.onEnterPressed: root._activateHighlighted()
-                    Keys.onPressed: event => {
-                        if (event.key === Qt.Key_Escape && text) {
-                            text = "";
-                            event.accepted = true;
+                        Keys.onUpPressed: root._navigateHighlight(-1)
+                        Keys.onDownPressed: root._navigateHighlight(1)
+                        Keys.onReturnPressed: root._activateHighlighted()
+                        Keys.onEnterPressed: root._activateHighlighted()
+                        Keys.onPressed: event => {
+                            if (event.key === Qt.Key_Escape && text) {
+                                text = "";
+                                event.accepted = true;
+                            }
                         }
                     }
                 }
             }
+        }
+
+        ViciDivider {
+            Layout.fillWidth: true
         }
 
         ListView {
@@ -125,6 +140,7 @@ Item {
             Layout.fillHeight: true
             clip: true
             bottomMargin: 8
+            topMargin: 6
             boundsBehavior: Flickable.StopAtBounds
             model: root._allItems
 
@@ -151,15 +167,13 @@ Item {
                     }
                 }
 
-                Rectangle {
+                ViciDivider {
                     visible: navItem.modelData._kind === "divider"
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.leftMargin: 16
                     anchors.rightMargin: 16
                     anchors.verticalCenter: parent.verticalCenter
-                    height: 1
-                    color: Theme.divider
                 }
 
                 SourceBlendRect {
@@ -174,7 +188,7 @@ Item {
                             const c = Theme.listItemSelectionBg;
                             return Qt.rgba(c.r, c.g, c.b, Config.windowOpacity);
                         }
-                        if (navItem._isHighlighted || itemHover.hovered) {
+                        if (navItem._isHighlighted || (itemHover.hovered && HoverActivation.active)) {
                             const h = Theme.listItemHoverBg;
                             return Qt.rgba(h.r, h.g, h.b, Config.windowOpacity);
                         }
@@ -189,8 +203,8 @@ Item {
 
                         ViciImage {
                             source: navItem.modelData._kind === "core" ? Img.builtin(navItem.modelData.icon).withFillColor(settings.currentPage === navItem._pageId ? Theme.listItemSelectionFg : Theme.textMuted) : (navItem.modelData.iconSource ?? "")
-                            Layout.preferredWidth: 16
-                            Layout.preferredHeight: 16
+                            Layout.preferredWidth: 18
+                            Layout.preferredHeight: 18
                             opacity: navItem._isEnabled ? 1.0 : 0.4
                         }
 

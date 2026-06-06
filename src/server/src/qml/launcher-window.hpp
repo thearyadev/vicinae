@@ -3,6 +3,8 @@
 #include "image-url.hpp"
 #include <QObject>
 #include <QQmlApplicationEngine>
+#include <QTimer>
+#include <QRect>
 #include <qtmetamacros.h>
 
 class ActionPanelController;
@@ -11,17 +13,15 @@ class ConfigBridge;
 class HudBridge;
 class ImageSource;
 class KeybindBridge;
-class RootSearchModel;
 class ThemeBridge;
 class ViewHostBase;
-class CommandListModel;
 class QQuickWindow;
 class BaseView;
 class DialogContentWidget;
 
 class LauncherWindow : public QObject {
   Q_OBJECT
-  Q_PROPERTY(bool isRootSearch READ isRootSearch NOTIFY isRootSearchChanged)
+  Q_PROPERTY(bool atRoot READ atRoot NOTIFY atRootChanged)
   Q_PROPERTY(bool showBackButton READ showBackButton NOTIFY showBackButtonChanged)
   Q_PROPERTY(QString searchPlaceholder READ searchPlaceholder NOTIFY searchPlaceholderChanged)
   Q_PROPERTY(QUrl searchAccessoryUrl READ searchAccessoryUrl NOTIFY searchAccessoryChanged)
@@ -48,11 +48,14 @@ class LauncherWindow : public QObject {
   Q_PROPERTY(bool hasOverlay READ hasOverlay NOTIFY overlayChanged)
   Q_PROPERTY(QUrl overlayUrl READ overlayUrl NOTIFY overlayChanged)
   Q_PROPERTY(QObject *overlayHost READ overlayHost NOTIFY overlayChanged)
+  Q_PROPERTY(int lsLayer READ lsLayer NOTIFY lsChanged)
+  Q_PROPERTY(int lsKeyboardInteractivity READ lsKeyboardInteractivity NOTIFY lsChanged)
+  Q_PROPERTY(bool canPositionWindow READ canPositionWindow CONSTANT)
 
 public:
   explicit LauncherWindow(ApplicationContext &ctx, QObject *parent = nullptr);
 
-  bool isRootSearch() const { return m_isRootSearch; }
+  bool atRoot() const { return m_atRoot; }
   bool showBackButton() const { return m_showBackButton; }
   QString searchPlaceholder() const { return m_searchPlaceholder; }
   QUrl searchAccessoryUrl() const { return m_searchAccessoryUrl; }
@@ -80,6 +83,9 @@ public:
   bool hasOverlay() const { return m_hasOverlay; }
   QUrl overlayUrl() const { return m_overlayUrl; }
   QObject *overlayHost() const { return m_overlayHost; }
+  int lsLayer() const { return m_lsLayer; }
+  int lsKeyboardInteractivity() const { return m_lsKeyboardInteractivity; }
+  static bool canPositionWindow();
 
   Q_INVOKABLE void expand();
   Q_INVOKABLE void forwardSearchText(const QString &text);
@@ -88,13 +94,15 @@ public:
   Q_INVOKABLE void handleEscape();
   Q_INVOKABLE void goBack();
   Q_INVOKABLE void popToRoot();
-  Q_INVOKABLE bool tryAliasFastTrack();
   Q_INVOKABLE int matchNavigationKey(int key, int modifiers);
   Q_INVOKABLE void setCompleterValue(int index, const QString &value);
+  Q_INVOKABLE QRect cursorScreenGeometry() const;
+  Q_INVOKABLE void positionOnCursorScreen();
+  Q_INVOKABLE void openFooterMenu();
 
 signals:
   void compactedChanged();
-  void isRootSearchChanged();
+  void atRootChanged();
   void showBackButtonChanged();
   void searchPlaceholderChanged();
   void searchAccessoryChanged();
@@ -104,7 +112,6 @@ signals:
   void commandViewPushed(const QUrl &componentUrl, const QVariantMap &properties);
   void commandViewReplaced(const QUrl &componentUrl, const QVariantMap &properties);
   void commandViewPopped();
-  void commandStackCleared();
   void navigationStatusChanged();
   void toastActiveChanged();
   void toastChanged();
@@ -117,6 +124,7 @@ signals:
   void completerValidationFailed();
   void windowSizeOverrideChanged();
   void overlayChanged();
+  void lsChanged();
 
 private:
   bool eventFilter(QObject *obj, QEvent *event) override;
@@ -125,13 +133,15 @@ private:
   void handleViewPoped(const BaseView *view);
   void setCompacted(bool value);
   void tryCompaction();
-  void updateBlur();
   void applyWindowConfig();
   bool isLayerShellActive() const;
   void setExclusiveFocus(bool exclusive);
+  void updateLayerShellProps();
+  void buildFooterMenu();
 
   ApplicationContext &m_ctx;
   ActionPanelController *m_actionPanel;
+  ActionPanelController *m_footerPanel;
   AlertModel *m_alertModel = nullptr;
   ConfigBridge *m_configBridge;
   ImageSource *m_imgSource;
@@ -139,10 +149,9 @@ private:
   ThemeBridge *m_themeBridge;
 
   QQmlApplicationEngine m_engine;
-  RootSearchModel *m_searchModel;
   QQuickWindow *m_window = nullptr;
   bool m_compacted = false;
-  bool m_isRootSearch = true;
+  bool m_atRoot = true;
   bool m_showBackButton = true;
   bool m_isLoading = false;
   bool m_searchVisible = true;
@@ -172,7 +181,10 @@ private:
   QUrl m_overlayUrl;
   QObject *m_overlayHost = nullptr;
 
+  QTimer m_cacheEvictionTimer;
   bool m_closeOnFocusLoss = false;
+  int m_lsLayer = 2;                 // LayerShellQt::Window::LayerTop
+  int m_lsKeyboardInteractivity = 2; // LayerShellQt::Window::KeyboardInteractivityOnDemand
   bool m_hasCompleter = false;
   QVariantList m_completerArgs;
   QString m_completerIcon;

@@ -5,22 +5,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(DATA_CONTROL_SERVER_BIN vicinae-data-control-server)
 
-find_package(Protobuf REQUIRED)
-
 include("${CMAKE_SOURCE_DIR}/cmake/Wayland.cmake")
-wayland_generate_protocol("wlr-data-control-unstable-v1")
 wayland_generate_protocol("ext-data-control-v1")
 
 add_executable(${DATA_CONTROL_SERVER_BIN}
   src/main.cpp
   src/selection.cpp
+  src/stdin-reader.cpp
+  src/clipboard-writer.cpp
   src/wayland/display.cpp
   src/wayland/registry.cpp
   src/wayland/seat.cpp
-  src/wlr/clipman.cpp
-  src/wlr/data-control-client.cpp
-  src/wlr/data-device.cpp
-  src/wlr/data-offer.cpp
   src/ext/clipman.cpp
   src/ext/data-control-client.cpp
   src/ext/data-device.cpp
@@ -34,24 +29,9 @@ target_include_directories(${DATA_CONTROL_SERVER_BIN} PRIVATE
 )
 
 target_link_libraries(${DATA_CONTROL_SERVER_BIN} PRIVATE
-  protobuf::libprotobuf
+  glaze::glaze
   wayland-client
-)
-
-protobuf_generate(
-  TARGET ${DATA_CONTROL_SERVER_BIN}
-  PROTOS ${CMAKE_SOURCE_DIR}/src/proto/wlr-clipboard.proto
-  IMPORT_DIRS ${CMAKE_SOURCE_DIR}/src/proto
-  PROTOC_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/proto
-)
-
-set_source_files_properties(
-  ${CMAKE_CURRENT_BINARY_DIR}/proto/wlr-clipboard.pb.cc
-  PROPERTIES SKIP_LINTING ON
-)
-
-target_include_directories(${DATA_CONTROL_SERVER_BIN} PRIVATE
-  ${CMAKE_CURRENT_BINARY_DIR}/proto
+  vicinae::common
 )
 
 install(TARGETS ${DATA_CONTROL_SERVER_BIN}

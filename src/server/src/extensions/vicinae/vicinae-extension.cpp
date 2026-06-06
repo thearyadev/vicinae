@@ -20,9 +20,10 @@
 #include "builtin-url-command.hpp"
 #include "single-view-command-context.hpp"
 #include "vicinae.hpp"
+#ifdef Q_OS_LINUX
 #include <malloc.h>
+#endif
 #include <qpixmapcache.h>
-#include <qsqlquery.h>
 #include <qurlquery.h>
 
 class OpenDocumentationCommand : public BuiltinUrlCommand {
@@ -76,7 +77,7 @@ class OpenDefaultVicinaeConfig : public BuiltinCallbackCommand {
   QString name() const override { return "Open Default Config File"; }
   QString description() const override { return "Open the default vicinae configuration file"; }
   ImageURL iconUrl() const override {
-    return ImageURL::builtin("pencil").setBackgroundTint(SemanticColor::Orange);
+    return ImageURL::builtin("pencil").setBackgroundTint(SemanticColor::Accent);
   }
 
   void execute(CommandController *controller) const override {
@@ -121,7 +122,9 @@ class PruneMemoryCommand : public BuiltinCallbackCommand {
 
   void execute(CommandController *controller) const override {
     QPixmapCache::clear();
+#ifdef Q_OS_LINUX
     malloc_trim(0);
+#endif
     controller->context()->services->toastService()->success("Pruned 🥊");
   }
 };

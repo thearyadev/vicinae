@@ -10,14 +10,17 @@ ScrollView {
     clip: true
     contentWidth: availableWidth
 
-    Text {
+    TextEdit {
         width: root.availableWidth
         text: root.text
-        textFormat: Text.PlainText
+        textFormat: TextEdit.PlainText
         color: Theme.foreground
         font.pointSize: Theme.smallerFontSize
-        font.family: root.monospace ? "monospace" : undefined
-        wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+        font.family: root.monospace ? Theme.monoFontFamily : undefined
+        wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
         padding: 12
+        readOnly: true
+        selectByMouse: true
+        selectionColor: Theme.textSelectionBg
     }
 }

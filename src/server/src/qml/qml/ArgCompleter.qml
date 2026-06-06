@@ -44,8 +44,8 @@ RowLayout {
     }
 
     ViciImage {
-        Layout.preferredWidth: 20
-        Layout.preferredHeight: 20
+        Layout.preferredWidth: 25
+        Layout.preferredHeight: 25
         Layout.alignment: Qt.AlignVCenter
         source: root.icon
     }
@@ -60,6 +60,10 @@ RowLayout {
             required property var modelData
 
             readonly property bool isLast: index === root.visibleArgs.length - 1
+            readonly property real maxArgWidth: {
+                var totalSpacing = root.spacing * (root.visibleArgs.length + 1);
+                return Math.max((root.width - 25 - totalSpacing) / root.visibleArgs.length, 60);
+            }
 
             Layout.alignment: Qt.AlignVCenter
 
@@ -73,12 +77,12 @@ RowLayout {
                     property string currentValue: textField.text
                     property bool showError: false
 
-                    implicitWidth: textMetrics.advanceWidth + 16
+                    implicitWidth: Math.min((textField.text ? textField.contentWidth : textMetrics.advanceWidth) + 16, argLoader.maxArgWidth)
                     implicitHeight: 26
                     radius: 4
                     color: "transparent"
                     border.width: 1
-                    border.color: textDel.showError ? "#e53935" : textField.activeFocus ? Theme.accent : Theme.divider
+                    border.color: Config.withAlpha(textDel.showError ? "#e53935" : textField.activeFocus ? Theme.accent : Theme.divider, Config.windowOpacity)
 
                     function forceActiveFocus() {
                         textField.forceActiveFocus();
@@ -158,7 +162,7 @@ RowLayout {
                     property string currentValue: ""
                     property bool showError: false
 
-                    implicitWidth: Math.max(dropdownMetrics.advanceWidth + 36, 80)
+                    implicitWidth: Math.min(Math.max(dropdownMetrics.advanceWidth + 36, 80), argLoader.maxArgWidth)
                     implicitHeight: 26
                     radius: 4
                     color: "transparent"

@@ -1,10 +1,12 @@
 #include "xdg-app-database.hpp"
 #include "environment.hpp"
 #include "services/app-service/xdg/xdg-app.hpp"
+#include "utils.hpp"
 #include "xdgpp/desktop-entry/entry.hpp"
 #include "xdgpp/desktop-entry/file.hpp"
 #include "xdgpp/mime/iterator.hpp"
 #include <algorithm>
+#include <qstandardpaths.h>
 #include <qtenvironmentvariables.h>
 #include <ranges>
 #include "xdgpp/xdg-terminal-exec/xdg-terminals-list.hpp"
@@ -22,7 +24,6 @@
 #include <set>
 #include <QDir>
 #include <unordered_set>
-#include <xdgpp/desktop-entry/iterator.hpp>
 #include <xdgpp/env/env.hpp>
 #include <xdgpp/mime/mime-apps-list.hpp>
 
@@ -35,6 +36,14 @@ using AppPtr = XdgAppDatabase::AppPtr;
 static constexpr const auto FALLBACK_TERMINAL_MIME = "x-scheme-handler/terminal";
 
 namespace {
+
+// TryExec check
+bool isExecutable(const xdgpp::DesktopEntry &entry) {
+  if (auto exec = entry.tryExec()) {
+    return !QStandardPaths::findExecutable(qStringFromStdView(*exec)).isEmpty();
+  }
+  return true;
+}
 
 bool revealInFileManager(const std::filesystem::path &path) {
   auto const fileUrl = QUrl::fromLocalFile(path.c_str()).toString();
@@ -94,7 +103,8 @@ bool XdgAppDatabase::scan(const std::vector<std::filesystem::path> &paths) {
   for (const auto &dir : paths) {
     std::error_code ec;
 
-    for (const auto &entry : fs::recursive_directory_iterator(dir, ec)) {
+    for (const auto &entry :
+         fs::recursive_directory_iterator(dir, fs::directory_options::skip_permission_denied, ec)) {
       if (!entry.is_regular_file(ec)) continue;
       if (!entry.path().filename().string().ends_with(".desktop")) continue;
 
@@ -105,7 +115,8 @@ bool XdgAppDatabase::scan(const std::vector<std::filesystem::path> &paths) {
 
       auto file = xdgpp::DesktopFile::fromFile(entry.path(), dir);
 
-      if (file.deleted()) continue;
+      if (!isExecutable(file) || file.deleted()) continue;
+
       if (file.errorMessage()) {
         qWarning() << "Desktop file" << file.path().c_str() << "is invalid" << *file.errorMessage();
         continue;
@@ -368,7 +379,7 @@ xdgpp::DesktopEntry::TerminalExec XdgAppDatabase::inferTermExec(const XdgApplica
         .hold = "--hold",
     };
   }
-  if (app.program() == "foot") {
+  if (app.program() == "foot" || app.program() == "footclient") {
     return {
         .exec = "-e",
         .appId = "--app-id",
@@ -388,8 +399,7 @@ xdgpp::DesktopEntry::TerminalExec XdgAppDatabase::getTermExec(const XdgApplicati
 }
 
 bool XdgAppDatabase::launchTerminalCommand(const std::vector<QString> &cmdline,
-                                           const LaunchTerminalCommandOptions &opts,
-                                           const std::optional<QString> &prefix) const {
+                                           const LaunchTerminalCommandOptions &opts) const {
   if (cmdline.empty()) return false;
 
   auto terminal = opts.emulator;
@@ -406,7 +416,7 @@ bool XdgAppDatabase::launchTerminalCommand(const std::vector<QString> &cmdline,
   auto xdgApp =
       static_cast<XdgApplication *>(terminal); // NOLINT(cppcoreguidelines-pro-type-static-cast-downcast)
 
-  auto exec = xdgApp->parseExec({}, prefix);
+  auto exec = xdgApp->parseExec({}, m_launchPrefix);
 
   if (exec.empty()) return false;
 
@@ -449,8 +459,7 @@ bool XdgAppDatabase::launchProcess(const QString &prog, const QStringList &args,
   return true;
 }
 
-bool XdgAppDatabase::launch(const AbstractApplication &app, const std::vector<QString> &args,
-                            const std::optional<QString> &launchPrefix) const {
+bool XdgAppDatabase::launch(const AbstractApplication &app, const std::vector<QString> &args) const {
   auto &xdgApp =
       static_cast<const XdgApplication &>(app); // NOLINT(cppcoreguidelines-pro-type-static-cast-downcast)
 
@@ -462,12 +471,12 @@ bool XdgAppDatabase::launch(const AbstractApplication &app, const std::vector<QS
       return false;
     }
 
-    return launch(*opener, {*url}, launchPrefix);
+    return launch(*opener, {*url});
   }
 
-  if (xdgApp.isTerminalApp()) return launchTerminalCommand(xdgApp.parseExec(args), {}, launchPrefix);
+  if (xdgApp.isTerminalApp()) return launchTerminalCommand(xdgApp.parseExec(args), {});
 
-  auto exec = xdgApp.parseExec(args, launchPrefix);
+  auto exec = xdgApp.parseExec(args, m_launchPrefix);
 
   if (exec.empty()) {
     qWarning() << "Failed to launch app" << app.id() << "exec command line empty";
@@ -514,5 +523,43 @@ AppPtr XdgAppDatabase::findByClass(const QString &name) const {
 }
 
 std::vector<AppPtr> XdgAppDatabase::list() const { return {m_apps.begin(), m_apps.end()}; }
+
+PreferenceList XdgAppDatabase::preferences() const {
+  auto defaultAction =
+      Preference::makeDropdown("defaultAction", {{"Focus window", "focus"}, {"Launch app", "launch"}});
+  defaultAction.setDefaultValue("focus");
+  defaultAction.setTitle("Default action");
+  defaultAction.setDescription("Action to perform when the return key is pressed. Always default to 'launch' "
+                               "if the app has no open window.");
+
+  auto launchPrefix = Preference::makeText("launchPrefix");
+  launchPrefix.setTitle("Launch Prefix");
+  launchPrefix.setDescription(
+      "Custom app launcher to use. Affects applications as well as their sub-actions.");
+  launchPrefix.setPlaceholder("uwsm app --");
+
+  auto paths = Preference::directories("paths");
+  QJsonArray defaultPaths;
+  for (const auto &searchPath : defaultSearchPaths()) {
+    defaultPaths.push_back(QString::fromStdString(searchPath));
+  }
+  paths.setTitle("Application directories");
+  paths.setDescription(
+      "Directories applications are sourced from. The list cannot be modified directly. In order to do so, "
+      "you need to append additonal paths to the <b>XDG_DATA_DIRS</b> environment variables.");
+  paths.setReadOnly(true);
+  paths.setDefaultValue(defaultPaths);
+
+  return {defaultAction, launchPrefix, paths};
+}
+
+void XdgAppDatabase::applyPreferences(const QJsonObject &preferences) {
+  auto val = preferences.value("launchPrefix").toString();
+  if (val.isEmpty()) {
+    m_launchPrefix = Environment::detectAppLauncher();
+  } else {
+    m_launchPrefix = val;
+  }
+}
 
 XdgAppDatabase::XdgAppDatabase() { scan(defaultSearchPaths()); }

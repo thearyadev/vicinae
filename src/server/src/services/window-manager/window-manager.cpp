@@ -2,19 +2,22 @@
 #include <algorithm>
 #include <qnamespace.h>
 #include <ranges>
+#include "dummy-window-manager.hpp"
+#include "services/window-manager/abstract-window-manager.hpp"
+#ifdef Q_OS_LINUX
 #include "hyprland/hyprland.hpp"
 #include "gnome/gnome-window-manager.hpp"
 #include "services/window-manager/kde/kde-window-manager.hpp"
 #include "niri/niri.hpp"
 #include "x11/x11-window-manager.hpp"
-#include "dummy-window-manager.hpp"
 #include "wayland/wayland.hpp"
-#include "services/window-manager/abstract-window-manager.hpp"
+#endif
 
 std::vector<std::unique_ptr<AbstractWindowManager>> WindowManager::createCandidates() {
   // XXX - For all new window managers, it is needed to add it to this vector
   std::vector<std::unique_ptr<AbstractWindowManager>> candidates;
 
+#ifdef Q_OS_LINUX
   candidates.emplace_back(std::make_unique<HyprlandWindowManager>());
   candidates.emplace_back(std::make_unique<GnomeWindowManager>());
   candidates.emplace_back(std::make_unique<KDE::WindowManager>());
@@ -23,6 +26,7 @@ std::vector<std::unique_ptr<AbstractWindowManager>> WindowManager::createCandida
 
   // this implementation is good enough for most standalone wayland compositors
   candidates.emplace_back(std::make_unique<WaylandWindowManager>());
+#endif
 
   return candidates;
 }
@@ -54,15 +58,6 @@ const AbstractWindowManager::AbstractWindow *WindowManager::findWindowById(const
 
 AbstractWindowManager::WindowList WindowManager::listWindows() const { return m_windows; }
 
-bool WindowManager::focusApp(const AbstractApplication &app) const {
-  if (auto wins = findAppWindows(app); !wins.empty()) {
-    provider()->focusWindowSync(*wins.front());
-    return true;
-  }
-
-  return false;
-}
-
 AbstractWindowManager::WindowList WindowManager::findAppWindows(const AbstractApplication &app) const {
   return m_windows | std::views::filter([&](auto &&win) {
            return app.matchesWindowClass(win->wmClass()) ||
@@ -81,4 +76,6 @@ WindowManager::WindowManager() {
     updateWindowCache();
     emit windowsChanged();
   });
+
+  connect(m_provider.get(), &AbstractWindowManager::focusChanged, this, &WindowManager::focusChanged);
 }

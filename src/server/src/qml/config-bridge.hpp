@@ -1,6 +1,7 @@
 #pragma once
 #include "config/config.hpp"
 #include "service-registry.hpp"
+#include <QColor>
 #include <QObject>
 
 class ConfigBridge : public QObject {
@@ -9,11 +10,13 @@ class ConfigBridge : public QObject {
   Q_PROPERTY(qreal windowOpacity READ windowOpacity NOTIFY changed)
   Q_PROPERTY(int borderWidth READ borderWidth NOTIFY changed)
   Q_PROPERTY(int borderRounding READ borderRounding NOTIFY changed)
+  Q_PROPERTY(int shadowSize READ shadowSize NOTIFY changed)
   Q_PROPERTY(int windowWidth READ windowWidth NOTIFY changed)
   Q_PROPERTY(int windowHeight READ windowHeight NOTIFY changed)
   Q_PROPERTY(bool emacsMode READ emacsMode NOTIFY changed)
   Q_PROPERTY(bool considerPreedit READ considerPreedit NOTIFY changed)
   Q_PROPERTY(bool activateOnSingleClick READ activateOnSingleClick NOTIFY changed)
+  Q_PROPERTY(bool blurEnabled READ blurEnabled NOTIFY changed)
 
 signals:
   void changed();
@@ -36,11 +39,21 @@ public:
     return csd.enabled ? csd.rounding : 0;
   }
 
+  int shadowSize() const {
+    auto &csd = cfg().launcherWindow.clientSideDecorations;
+    return csd.enabled ? csd.shadowSize : 0;
+  }
+
   int windowWidth() const { return cfg().launcherWindow.size.width; }
   int windowHeight() const { return cfg().launcherWindow.size.height; }
   bool emacsMode() const { return cfg().keybinding == "emacs"; }
   bool considerPreedit() const { return cfg().considerPreedit; }
   bool activateOnSingleClick() const { return cfg().activateOnSingleClick; }
+  bool blurEnabled() const { return cfg().launcherWindow.blur.enabled; }
+
+  Q_INVOKABLE static QColor withAlpha(const QColor &c, qreal alpha) {
+    return QColor::fromRgbF(c.redF(), c.greenF(), c.blueF(), alpha);
+  }
 
 private:
   static const config::ConfigValue &cfg() { return ServiceRegistry::instance()->config()->value(); }

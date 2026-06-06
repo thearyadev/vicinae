@@ -24,7 +24,7 @@ Item {
 
     property string emptyTitle: "No results"
     property string emptyDescription: ""
-    property string emptyIcon: "image://vicinae/builtin:magnifying-glass?fg=" + Theme.foreground
+    property var emptyIcon: Img.builtin("magnifying-glass").withFillColor(Theme.foreground)
     property Component emptyViewComponent: null
 
     property bool suppressEmpty: false
@@ -142,6 +142,19 @@ Item {
         }
     }
 
+    HoverResetOnModelChange {
+        target: root.listModel
+    }
+
+    Connections {
+        target: (root.autoWireModel && root.listModel && ("selectedIndex" in root.listModel)) ? root.listModel : null
+        function onSelectedIndexChanged() {
+            const idx = root.listModel.selectedIndex;
+            if (listView.currentIndex !== idx)
+                listView.currentIndex = idx;
+        }
+    }
+
     onItemSelected: function (index) {
         if (root.autoWireModel && root.listModel)
             root.listModel.setSelectedIndex(index);
@@ -182,11 +195,10 @@ Item {
             }
         }
 
-        Rectangle {
+        ViciDivider {
             visible: root._showDetail
+            vertical: true
             Layout.fillHeight: true
-            implicitWidth: 1
-            color: Theme.divider
         }
 
         Loader {

@@ -19,12 +19,20 @@ APPLICATIONS_DIR="$PREFIX/share/applications"
 SYSTEMD_USER_DIR="$PREFIX/lib/systemd/user"
 
 VICINAE_SCRIPT_PATH="$TEMP_DIR/vicinae-install-script.sh"
-SCRIPT_DOWNLOAD_URL="https://vicinae.com/install.sh"
+SCRIPT_DOWNLOAD_URL="https://vicinae.com/install"
 DOCS_URL="https://docs.vicinae.com/install/script"
 
 TEMP_FILES=()
 PRESERVE_FILES=()
- 
+
+WARNINGS=()
+
+warn() {
+  echo -e "  \033[1;33m⚠ WARNING:\033[0m $1" >&2
+  WARNINGS+=("$1")
+}
+ok() { echo -e "  \033[0;32m✓\033[0m $1" >&2; }
+
 cleanup() {
 	rm -f $VICINAE_SCRIPT_PATH
 	for file in "${TEMP_FILES[@]}"; do
@@ -89,7 +97,8 @@ check_dependencies() {
 		exit 1
 	fi
 
-	echo "✓ All dependencies found"
+	ok "All dependencies found"
+	echo 
 }
 
 check_permissions() {
@@ -104,7 +113,7 @@ check_permissions() {
 		echo ""
 
 		if [[ $EUID -eq 0 ]]; then
-			echo "✓ Running as root"
+			ok "Running as root"
 		else
 			# Check for available privilege escalation tools
 			local escalation_cmd=""
@@ -144,7 +153,8 @@ check_permissions() {
 			exec $escalation_cmd "$VICINAE_SCRIPT_PATH" "${ORIGINAL_ARGS[@]}"
 		fi
 	else
-		echo "✓ Have write permissions to $PREFIX"
+		ok "Have write permissions to $PREFIX"
+		echo
 	fi
 }
 
@@ -171,9 +181,10 @@ get_latest_release_info() {
 		exit 1
 	fi
 
-	echo "✓ Latest version: $tag_name" >&2
-	echo "✓ AppImage asset: $appimage_name" >&2
+	ok "Latest version: $tag_name"
+	ok "AppImage asset: $appimage_name"
 	echo "$tag_name|$appimage_name"
+	echo
 }
 
 get_installed_version() {
@@ -221,7 +232,7 @@ download_appimage() {
 	local download_url="https://github.com/$REPO/releases/download/$version/$appimage_name"
 
 	if [[ -f "$download_path" && -x "$download_path" ]]; then
-		echo "✓ Using cached AppImage: $download_path" >&2
+		ok "Using cached AppImage: $download_path"
 		PRESERVE_FILES+=("$download_path")
 		echo "$download_path"
 		return 0
@@ -234,7 +245,7 @@ download_appimage() {
 	if curl -L --progress-bar "$download_url" -o "$download_path"; then
 		chmod +x "$download_path"
 		PRESERVE_FILES+=("$download_path") # Keep for future runs
-		echo "✓ Download completed: $download_path" >&2
+		ok "Download completed: $download_path"
 		echo "$download_path"
 	else
 		echo "Error: Failed to download AppImage" >&2
@@ -263,7 +274,7 @@ extract_appimage() {
 		if [[ -d "squashfs-root" ]]; then
 			mv squashfs-root/* squashfs-root/.[!.]* . 2>/dev/null || true
 			rmdir squashfs-root 2>/dev/null || rm -rf squashfs-root
-			echo "✓ Extraction completed" >&2
+			ok "Extraction completed"
 			echo "$extract_dir"
 			rm $extract_logs
 			rm $appimage_path
@@ -290,7 +301,8 @@ install_themes() {
 		cp -r "$themes_source"/* "$THEMES_DIR/" 2>/dev/null || true
 
 		if [[ -n "$(ls -A "$THEMES_DIR" 2>/dev/null)" ]]; then
-			echo "✓ Themes installed to $THEMES_DIR" >&2
+			ok "Themes installed to $THEMES_DIR"
+			echo
 		else
 			echo "Note: No themes found in $themes_source" >&2
 		fi
@@ -310,12 +322,13 @@ install_desktop_files() {
 		# Copy only vicinae-related desktop files
 		if ls "$applications_source"/vicinae*.desktop >/dev/null 2>&1; then
 			cp "$applications_source"/vicinae*.desktop "$APPLICATIONS_DIR/" 2>/dev/null || true
-			echo "✓ Desktop files installed to $APPLICATIONS_DIR" >&2
+			ok "Desktop files installed to $APPLICATIONS_DIR"
 
 			# Update desktop database if available
 			if command -v update-desktop-database >/dev/null 2>&1; then
 				update-desktop-database "$APPLICATIONS_DIR" 2>/dev/null || true
-				echo "✓ Desktop database updated" >&2
+				ok "Desktop database updated"
+				echo
 			fi
 		else
 			echo "Note: No vicinae desktop files found in $applications_source" >&2
@@ -325,81 +338,118 @@ install_desktop_files() {
 	fi
 }
 
-install_browser_manifests() {
-	echo "Installing browser native messaging manifests..." >&2
+install_icons() {
+	echo "Installing application icons..." >&2
 
-	local templates_dir="$INSTALL_DIR/usr/share/vicinae/native-messaging-hosts"
-	local native_host_bin="$INSTALL_DIR/usr/libexec/vicinae/vicinae-browser-link"
-	local chrome_extension_id="com.vicinae.vicinae"
+	local icon_source="$INSTALL_DIR/usr/share/icons/hicolor/512x512/apps/vicinae.png"
+	local icon_dest_dir="$PREFIX/share/icons/hicolor/512x512/apps"
 
-	if [[ ! -d "$templates_dir" ]]; then
-		echo "Note: No browser manifest templates found" >&2
-		return
-	fi
+	if [[ -f "$icon_source" ]]; then
+		mkdir -p "$icon_dest_dir"
+		cp "$icon_source" "$icon_dest_dir/"
 
-	if [[ $EUID -ne 0 ]]; then
-		echo "Note: Skipping browser native messaging manifest installation (not root)" >&2
-		echo "  See https://docs.vicinae.com for manual setup instructions." >&2
-		return
-	fi
+		if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+			gtk-update-icon-cache -f -t "$PREFIX/share/icons/hicolor" 2>/dev/null || true
+		fi
 
-	# Chromium
-	local chromium_dest="/etc/chromium/native-messaging-hosts"
-	local chromium_template="$templates_dir/com.vicinae.vicinae.chromium.json.in"
-	if [[ -f "$chromium_template" ]]; then
-		mkdir -p "$chromium_dest"
-		sed -e "s|@NATIVE_HOST_BIN@|$native_host_bin|g" \
-			-e "s|@CHROME_EXTENSION_ID@|$chrome_extension_id|g" \
-			"$chromium_template" > "$chromium_dest/com.vicinae.vicinae.json"
-		echo "✓ Chromium native messaging manifest installed to $chromium_dest" >&2
-	fi
-
-	# Firefox
-	local firefox_dest="/usr/lib/mozilla/native-messaging-hosts"
-	local firefox_template="$templates_dir/com.vicinae.vicinae.firefox.json.in"
-	if [[ -f "$firefox_template" ]]; then
-		mkdir -p "$firefox_dest"
-		sed -e "s|@NATIVE_HOST_BIN@|$native_host_bin|g" \
-			"$firefox_template" > "$firefox_dest/com.vicinae.vicinae.json"
-		echo "✓ Firefox native messaging manifest installed to $firefox_dest" >&2
+		ok "Application icon installed to $icon_dest_dir/vicinae.png"
+		echo
+	else
+		warn "Application icon not found at $icon_source"
 	fi
 }
 
-install_udev_rules() {
-	echo "Installing udev rules and modules-load config (for paste support)..." >&2
+install_browser_manifests() {
+    echo "Installing browser native messaging manifests..." >&2
+
+    local templates_dir="$INSTALL_DIR/usr/share/vicinae/native-messaging-hosts"
+    local native_host_bin="$INSTALL_DIR/usr/libexec/vicinae/vicinae-browser-link"
+    local chrome_extension_id="com.vicinae.vicinae"
+
+    if [[ ! -d "$templates_dir" ]]; then
+        echo "Note: No browser manifest templates found" >&2
+        return
+    fi
+
+    if [[ $EUID -ne 0 ]]; then
+        warn "Note: Skipping browser native messaging manifest installation (not root)"
+        echo "  See $DOCS_URL for manual setup instructions." >&2
+        return
+    fi
+
+	# Chromium
+    local chromium_dest="/etc/chromium/native-messaging-hosts"
+    local chromium_template="$templates_dir/com.vicinae.vicinae.chromium.json.in"
+    if [[ -f "$chromium_template" ]]; then
+        if ! mkdir -p "$chromium_dest" 2>/tmp/vic.err; then
+            warn "Chromium: cannot create $chromium_dest"
+        elif ! sed -e "s|@NATIVE_HOST_BIN@|$native_host_bin|g" \
+                   -e "s|@CHROME_EXTENSION_ID@|$chrome_extension_id|g" \
+                   "$chromium_template" > "$chromium_dest/com.vicinae.vicinae.json" 2>/tmp/vic.err; then
+            warn "Chromium: failed to write manifest"
+        else
+            ok "Chromium native messaging manifest installed to $chromium_dest"
+        fi
+    fi
+
+	# Firefox
+    local firefox_dest="/usr/lib/mozilla/native-messaging-hosts"
+    local firefox_template="$templates_dir/com.vicinae.vicinae.firefox.json.in"
+    if [[ -f "$firefox_template" ]]; then
+        if ! mkdir -p "$firefox_dest" 2>/tmp/vic.err; then
+            warn "Firefox: cannot create $firefox_dest"
+        elif ! sed -e "s|@NATIVE_HOST_BIN@|$native_host_bin|g" \
+                   "$firefox_template" > "$firefox_dest/com.vicinae.vicinae.json" 2>/tmp/vic.err; then
+            warn "Firefox: failed to write manifest"
+			echo
+        else
+            ok "Firefox native messaging manifest installed"
+        fi
+    fi
+}
+
+install_input_server_capabilities() {
+	echo "Setting input server capabilities (for keyboard monitoring and injection)..." >&2
 
 	if [[ $EUID -ne 0 ]]; then
-		echo "Note: Skipping udev rules installation (not root)" >&2
-		echo "  Paste support requires /dev/uinput access. See https://docs.vicinae.com for manual setup." >&2
+		warn "Skipping input server capabilities (not root)"
+		warn "  Snippet expansion and paste require evdev/uinput access. Run: sudo setcap cap_dac_override=ep $INSTALL_DIR/usr/libexec/vicinae/vicinae-input-server"
 		return
 	fi
 
-	local udev_source="$INSTALL_DIR/usr/lib/udev/rules.d"
-	local udev_dest="$PREFIX/lib/udev/rules.d"
+	local input_bin="$INSTALL_DIR/usr/libexec/vicinae/vicinae-input-server"
+
+	if [[ -f "$input_bin" ]]; then
+		if command -v setcap >/dev/null 2>&1; then
+			setcap "cap_dac_override=ep" "$input_bin"
+			ok "Input server capabilities set (cap_dac_override)"
+		else
+			warn "setcap not found — snippet expansion and paste will not work without manual permission setup"
+		fi
+	else
+		echo "Note: Input server binary not found at $input_bin" >&2
+	fi
+}
+
+install_modules_load() {
+	echo "Installing modules-load config (for uinput kernel module)..." >&2
+
+	if [[ $EUID -ne 0 ]]; then
+		warn "Skipping modules-load config installation (not root)"
+		return
+	fi
+
 	local modules_source="$INSTALL_DIR/usr/lib/modules-load.d"
 	local modules_dest="$PREFIX/lib/modules-load.d"
-
-	if [[ -d "$udev_source" ]]; then
-		mkdir -p "$udev_dest"
-		cp "$udev_source"/* "$udev_dest/" 2>/dev/null || true
-		echo "✓ udev rules installed to $udev_dest" >&2
-
-		if command -v udevadm >/dev/null 2>&1; then
-			udevadm control --reload-rules 2>/dev/null || true
-			udevadm trigger 2>/dev/null || true
-			echo "✓ udev rules reloaded" >&2
-		fi
-	fi
 
 	if [[ -d "$modules_source" ]]; then
 		mkdir -p "$modules_dest"
 		cp "$modules_source"/* "$modules_dest/" 2>/dev/null || true
-		echo "✓ modules-load config installed to $modules_dest" >&2
+		ok "modules-load config installed to $modules_dest"
 
-		# Load uinput module immediately if not already loaded
 		if ! lsmod | grep -q "^uinput"; then
 			modprobe uinput 2>/dev/null || true
-			echo "✓ uinput module loaded" >&2
+			ok "uinput module loaded"
 		fi
 	fi
 }
@@ -419,12 +469,13 @@ install_systemd_service() {
 		# Replace 'vicinae' with absolute path in ExecStart
 		sed -i "s|ExecStart=vicinae|ExecStart=$BIN_DIR/$BINARY_NAME|g" "$service_dest"
 
-		echo "✓ Systemd service installed to $service_dest" >&2
+		ok "Systemd service installed to $service_dest"
 
 		# Reload systemd user daemon if available
 		if command -v systemctl >/dev/null 2>&1; then
 			systemctl --user daemon-reload 2>/dev/null || true
-			echo "✓ Systemd user daemon reloaded" >&2
+			ok "Systemd user daemon reloaded"
+			echo
 		fi
 	else
 		echo "Note: Systemd service file not found at $service_source" >&2
@@ -456,7 +507,7 @@ install_vicinae() {
 		local node_path="$INSTALL_DIR/usr/bin/node"
 		if [[ -f "$node_path" ]]; then
 			ln -sf "$node_path" "$BIN_DIR/vicinae-node"
-			echo "✓ Node.js binary symlinked to $BIN_DIR/vicinae-node" >&2
+			ok "Node.js binary symlinked to $BIN_DIR/vicinae-node"
 		fi
 
 		# After successful installation, mark the AppImage for cleanup
@@ -465,14 +516,17 @@ install_vicinae() {
 			TEMP_FILES+=("$2")
 		fi
 
-		echo "✓ Installation completed" >&2
+		ok "Installation completed"
+		echo
 
-		# Install themes, desktop files, systemd service, and system configs
+		# Install themes, desktop files, icons, systemd service, and system configs
 		install_themes
 		install_desktop_files
+		install_icons
 		install_systemd_service
 		install_browser_manifests
-		install_udev_rules
+		install_modules_load
+		install_input_server_capabilities
 	else
 		echo "Error: Vicinae binary not found in extracted files" >&2
 		echo "Looking in: $extract_dir" >&2
@@ -486,34 +540,43 @@ uninstall_vicinae() {
 
 	if [[ -d "$INSTALL_DIR" ]]; then
 		rm -rf "$INSTALL_DIR"
-		echo "✓ Removed installation directory: $INSTALL_DIR"
+		ok "Removed installation directory: $INSTALL_DIR"
 	else
 		echo "No installation directory found"
 	fi
 
 	if [[ -L "$BIN_DIR/$BINARY_NAME" ]]; then
 		rm -f "$BIN_DIR/$BINARY_NAME"
-		echo "✓ Removed binary symlink: $BIN_DIR/$BINARY_NAME"
+		ok "Removed binary symlink:	    $BIN_DIR/$BINARY_NAME"
 	else
 		echo "No binary symlink found"
 	fi
 
 	if [[ -L "$BIN_DIR/vicinae-node" ]]; then
 		rm -f "$BIN_DIR/vicinae-node"
-		echo "✓ Removed Node.js symlink: $BIN_DIR/vicinae-node"
+		ok "Removed Node.js symlink: 	    $BIN_DIR/vicinae-node"
 	fi
 
 	if [[ -d "$THEMES_DIR" ]]; then
 		rm -rf "$THEMES_DIR"
-		echo "✓ Removed themes directory: $THEMES_DIR"
+		ok "Removed themes directory: 	    $THEMES_DIR"
 	fi
 
 	if ls "$APPLICATIONS_DIR"/vicinae*.desktop >/dev/null 2>&1; then
 		rm -f "$APPLICATIONS_DIR"/vicinae*.desktop
-		echo "✓ Removed desktop files from: $APPLICATIONS_DIR"
+		ok "Removed desktop files from:     $APPLICATIONS_DIR"
 		# Update desktop database if available
 		if command -v update-desktop-database >/dev/null 2>&1; then
 			update-desktop-database "$APPLICATIONS_DIR" 2>/dev/null || true
+		fi
+	fi
+
+	local icon_file="$PREFIX/share/icons/hicolor/512x512/apps/vicinae.png"
+	if [[ -f "$icon_file" ]]; then
+		rm -f "$icon_file"
+		ok "Removed application icon:        $icon_file"
+		if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+			gtk-update-icon-cache -f -t "$PREFIX/share/icons/hicolor" 2>/dev/null || true
 		fi
 	fi
 
@@ -524,7 +587,7 @@ uninstall_vicinae() {
 			systemctl --user disable "$SYSTEMD_SERVICE_NAME" 2>/dev/null || true
 		fi
 		rm -f "$SYSTEMD_USER_DIR/$SYSTEMD_SERVICE_NAME"
-		echo "✓ Removed systemd service: $SYSTEMD_USER_DIR/$SYSTEMD_SERVICE_NAME"
+		ok "Removed systemd service: 	    $SYSTEMD_USER_DIR/$SYSTEMD_SERVICE_NAME"
 		# Reload systemd user daemon
 		if command -v systemctl >/dev/null 2>&1; then
 			systemctl --user daemon-reload 2>/dev/null || true
@@ -533,28 +596,29 @@ uninstall_vicinae() {
 
 	if [[ -f "$PREFIX/lib/udev/rules.d/70-vicinae.rules" ]]; then
 		rm -f "$PREFIX/lib/udev/rules.d/70-vicinae.rules"
-		echo "✓ Removed udev rules"
+		ok "Removed udev rules"
 		if command -v udevadm >/dev/null 2>&1; then
 			udevadm control --reload-rules 2>/dev/null || true
 		fi
 	fi
 	if [[ -f "$PREFIX/lib/modules-load.d/vicinae.conf" ]]; then
 		rm -f "$PREFIX/lib/modules-load.d/vicinae.conf"
-		echo "✓ Removed modules-load config"
+		ok "Removed modules-load config"
 	fi
 
 	if [[ $EUID -eq 0 ]]; then
 		if [[ -f "/etc/chromium/native-messaging-hosts/com.vicinae.vicinae.json" ]]; then
 			rm -f "/etc/chromium/native-messaging-hosts/com.vicinae.vicinae.json"
-			echo "✓ Removed Chromium native messaging manifest"
+			ok "Removed Chromium native messaging manifest"
 		fi
 		if [[ -f "/usr/lib/mozilla/native-messaging-hosts/com.vicinae.vicinae.json" ]]; then
 			rm -f "/usr/lib/mozilla/native-messaging-hosts/com.vicinae.vicinae.json"
-			echo "✓ Removed Firefox native messaging manifest"
+			ok "Removed Firefox native messaging manifest"
 		fi
 	fi
 
-	echo "✓ Vicinae has been uninstalled"
+	echo
+	ok "Vicinae has been uninstalled"
 }
 
 show_usage() {
@@ -644,8 +708,10 @@ main() {
 	local installed_version
 	installed_version=$(get_installed_version)
 
-	echo "Installed version: $installed_version"
-	echo "Latest version: $latest_version"
+	echo
+	echo "  Installed version: $installed_version"
+	echo "  Latest version:    $latest_version"
+	echo
 
 	# Check if update is needed
 	if compare_versions "$installed_version" "$latest_version"; then
@@ -665,14 +731,21 @@ main() {
 
 		install_vicinae "$extract_dir" "$appimage_path"
 
-		echo ""
+		if (( ${#WARNINGS[@]} > 0 )); then
+			echo 
+			echo -e "\033[1;33mInstallation completed with ${#WARNINGS[@]} warning(s):\033[0m"
+			for w in "${WARNINGS[@]}"; do
+				echo "  • $w"
+			done
+		fi
+
+		echo 
 		echo "🎉 Vicinae $latest_version has been successfully installed!"
-		echo ""
+		echo 
 
 		# Check if binary directory is in PATH
 		if [[ ":$PATH:" == *":$BIN_DIR:"* ]]; then
-			echo "✓ $BIN_DIR is already in your PATH"
-			echo "You can now run 'vicinae' from anywhere in your terminal."
+			ok "$BIN_DIR is already in your PATH. You can now run 'vicinae' from anywhere in your terminal."
 		else
 			echo "To use Vicinae, add $BIN_DIR to your PATH:"
 			if [[ "$BIN_DIR" == "$HOME"* ]]; then
@@ -691,7 +764,7 @@ main() {
 		echo ""
 		echo "Check the quickstart section for your Desktop Environment at https://docs.vicinae.com"
 	else
-		echo "✓ Vicinae is already up to date ($installed_version)"
+		ok "Vicinae is already up to date"
 	fi
 }
 

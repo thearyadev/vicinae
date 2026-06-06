@@ -1,12 +1,13 @@
 #include "clipboard-history-view-host.hpp"
 #include "extensions/clipboard/history/clipboard-history-controller.hpp"
-#include "clipboard-history-model.hpp"
 #include "view-utils.hpp"
 #include "service-registry.hpp"
 #include "services/clipboard/clipboard-service.hpp"
 #include "utils/utils.hpp"
 #include <QDateTime>
-#include <QMimeDatabase>
+#include <QDir>
+#include <QFile>
+#include <QStandardPaths>
 #include <QUrl>
 
 static std::optional<ClipboardOfferKind> kindFromFilterIndex(int index) {
@@ -67,15 +68,17 @@ void ClipboardHistoryViewHost::initialize() {
   BaseView::initialize();
 
   m_clipman = context()->services->clipman();
-  m_model = new ClipboardHistoryModel(this);
-  m_model->setScope(ViewScope(context(), this));
-  m_model->initialize();
+  m_model.setScope(ViewScope(context(), this));
+
+  m_section.setOnEntrySelected([this](const ClipboardHistoryEntry &e) { loadDetail(e); });
+  m_model.addSource(&m_section);
+
   m_controller = new ClipboardHistoryController(m_clipman, this);
 
   auto preferences = command()->preferenceValues();
   auto defaultActionStr = preferences.value("defaultAction").toString();
-  m_model->setDefaultAction(defaultActionStr == "paste" ? ClipboardHistoryModel::DefaultAction::Paste
-                                                        : ClipboardHistoryModel::DefaultAction::Copy);
+  m_section.setDefaultAction(defaultActionStr == "paste" ? ClipboardHistorySection::DefaultAction::Paste
+                                                         : ClipboardHistorySection::DefaultAction::Copy);
 
   setSearchPlaceholderText("Browse clipboard history...");
 
@@ -92,13 +95,14 @@ void ClipboardHistoryViewHost::initialize() {
 
   connect(m_controller, &ClipboardHistoryController::dataRetrieved, this,
           [this](const PaginatedResponse<ClipboardHistoryEntry> &page) {
-            m_model->setEntries(page);
+            bool const incremental = !m_model.selectFirstOnReset();
+            m_section.setEntries(page);
+            m_model.setSelectFirstOnReset(false);
+            if (incremental) m_model.refreshActionPanel();
             handleDataRetrieved(page.totalCount);
           });
 
   connect(m_controller, &ClipboardHistoryController::dataLoadingChanged, this, &BaseView::setLoading);
-
-  connect(m_model, &ClipboardHistoryModel::entrySelected, this, &ClipboardHistoryViewHost::loadDetail);
 
   auto savedFilter = getSavedDropdownFilter().value_or("all");
   if (auto it = savedFilterToKind.find(savedFilter); it != savedFilterToKind.end()) {
@@ -110,15 +114,13 @@ void ClipboardHistoryViewHost::initialize() {
 void ClipboardHistoryViewHost::loadInitialData() { m_controller->setFilter(searchText()); }
 
 void ClipboardHistoryViewHost::textChanged(const QString &text) {
-  m_model->resetSelectionOnNextUpdate();
+  m_model.setSelectFirstOnReset(true);
   m_controller->setFilter(text);
 }
 
-void ClipboardHistoryViewHost::onReactivated() { m_model->refreshActionPanel(); }
+void ClipboardHistoryViewHost::onReactivated() { m_model.refreshActionPanel(); }
 
-void ClipboardHistoryViewHost::beforePop() { m_model->beforePop(); }
-
-QObject *ClipboardHistoryViewHost::listModel() const { return m_model; }
+void ClipboardHistoryViewHost::beforePop() { m_model.beforePop(); }
 
 void ClipboardHistoryViewHost::toggleMonitoring() {
   QJsonObject patch;
@@ -136,7 +138,7 @@ void ClipboardHistoryViewHost::setKindFilter(int kind) {
   emit currentKindFilterChanged();
 
   auto offerKind = kindFromFilterIndex(kind);
-  m_model->resetSelectionOnNextUpdate();
+  m_model.setSelectFirstOnReset(true);
   m_controller->setKindFilter(offerKind);
 
   if (kind >= 0 && kind <= 4) { saveDropdownFilter(filterIndexToSavedValue[kind]); }
@@ -148,7 +150,7 @@ void ClipboardHistoryViewHost::handleMonitoringChanged(bool monitoring) {
   if (monitoring) {
     m_clipboardStatusText = QStringLiteral("Pause clipboard");
     m_clipboardStatusIcon =
-        qml::imageSourceFor(ImageURL::builtin("pause-filled").setFill(SemanticColor::Orange));
+        qml::imageSourceFor(ImageURL::builtin("pause-filled").setFill(SemanticColor::Accent));
   } else {
     m_clipboardStatusText = QStringLiteral("Resume clipboard");
     m_clipboardStatusIcon =
@@ -216,43 +218,35 @@ void ClipboardHistoryViewHost::loadDetail(const ClipboardHistoryEntry &entry) {
         std::error_code ec;
         std::filesystem::path const path = url.path().toStdString();
         if (std::filesystem::is_regular_file(path, ec)) {
-          auto fileMime = QMimeDatabase().mimeTypeForFile(path.c_str());
-          if (fileMime.name().startsWith("image/")) {
-            m_detailImageSource = qml::imageSourceFor(ImageURL::local(path));
-            m_hasDetail = true;
-            emit detailChanged();
-            return;
-          }
-          if (Utils::isTextMimeType(fileMime)) {
-            QFile file(path.c_str());
-            if (file.open(QIODevice::ReadOnly)) { m_detailTextContent = QString::fromUtf8(file.readAll()); }
-            m_hasDetail = true;
-            emit detailChanged();
-            return;
-          }
+          auto preview = qml::resolveFilePreview(path, m_mimeDb);
+          m_detailImageSource = preview.imageSource;
+          m_detailTextContent = preview.textContent;
+          m_hasDetail = true;
+          emit detailChanged();
+          return;
         }
       }
     }
   }
 
   if (mime.startsWith("image/")) {
-    // Create a fresh temp file each time so the URL changes and QML does not
-    // serve a stale cached image from a previous selection.
-    m_tmpFile = std::make_unique<QTemporaryFile>();
-    m_tmpFile->setAutoRemove(true);
-    if (m_tmpFile->open()) {
-      m_tmpFile->write(rawData);
-      m_tmpFile->flush();
-      m_detailImageSource = qml::imageSourceFor(ImageURL::local(m_tmpFile->filesystemFileName()));
-      m_tmpFile->close();
+    auto const cacheDir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+    QDir().mkpath(cacheDir);
+    QString const path = cacheDir + QStringLiteral("/clipboard-") + entry.md5sum;
+    QFile f(path);
+    if (!f.exists() && f.open(QIODevice::WriteOnly)) {
+      f.write(rawData);
+      f.close();
     }
+    m_detailImageSource = qml::imageSourceFor(ImageURL::local(path));
     m_hasDetail = true;
     emit detailChanged();
     return;
   }
 
   if (Utils::isTextMimeType(mime) || mime == "text/uri-list") {
-    m_detailTextContent = QString::fromUtf8(rawData);
+    static constexpr qsizetype MAX_DISPLAY = 10 * 1024;
+    m_detailTextContent = QString::fromUtf8(rawData.first(qMin<qsizetype>(rawData.size(), MAX_DISPLAY)));
     m_hasDetail = true;
     emit detailChanged();
     return;

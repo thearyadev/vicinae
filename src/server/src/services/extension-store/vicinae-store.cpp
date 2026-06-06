@@ -1,6 +1,6 @@
 #include "vicinae-store.hpp"
-#include "lib/glaze-qt.hpp"
-#include "version.h"
+#include "internal/glaze-qt.hpp"
+#include "generated/version.h"
 #include "environment.hpp"
 #include "theme.hpp"
 #include "theme/theme-file.hpp"
@@ -54,6 +54,24 @@ VicinaeStoreService::fetchExtensions(const VicinaeStore::ListPaginationOptions &
         return *std::move(result);
       });
 }
+
+QFuture<VicinaeStore::ListResult> VicinaeStoreService::fetchAll() {
+  if (m_cache) {
+    return QtFuture::makeReadyValueFuture(VicinaeStore::ListResult{VicinaeStore::ListResponse{*m_cache, {}}});
+  }
+
+  return fetchExtensions({.limit = 500})
+      .then(this, [this](VicinaeStore::ListResult result) -> VicinaeStore::ListResult {
+        if (result) { m_cache = result->extensions; }
+        return result;
+      });
+}
+
+const std::vector<VicinaeStore::Extension> *VicinaeStoreService::cached() const {
+  return m_cache ? &*m_cache : nullptr;
+}
+
+void VicinaeStoreService::invalidateCache() { m_cache.reset(); }
 
 QFuture<VicinaeStore::ListResult> VicinaeStoreService::search(const QString &query) {
   auto url = QString("/store/search?q=%1").arg(query);

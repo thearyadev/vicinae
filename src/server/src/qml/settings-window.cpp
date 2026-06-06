@@ -1,10 +1,11 @@
 #include "settings-window.hpp"
 #include "common/entrypoint.hpp"
-#include "async-image-provider.hpp"
 #include "config-bridge.hpp"
 #include "extension-settings-model.hpp"
 #include "general-settings-model.hpp"
 #include "image-source.hpp"
+#include "keyboard-bridge.hpp"
+#include "global-shortcut-bridge.hpp"
 #include "keybind-settings-model.hpp"
 #include "theme-bridge.hpp"
 #include "view-utils.hpp"
@@ -12,16 +13,19 @@
 #include "extension/extension.hpp"
 #include "root-search/extensions/extension-root-provider.hpp"
 #include "service-registry.hpp"
-#include "services/background-effect/background-effect-manager.hpp"
+#include "services/global-shortcuts/global-shortcut-service.hpp"
 #include "services/file-chooser/file-chooser-service.hpp"
 #include "services/app-service/app-service.hpp"
 #include "services/root-item-manager/root-item-manager.hpp"
 #include "settings-controller/settings-controller.hpp"
 #include "vicinae.hpp"
-#include "version.h"
-#include "lib/fuzzy/fuzzy-searchable.hpp"
+#include "generated/version.h"
+#include "fuzzy/fuzzy-searchable.hpp"
 #include <QQmlContext>
 #include <QQuickWindow>
+#ifdef Q_OS_MACOS
+#include "macos-chrome-attached.hpp"
+#endif
 
 SettingsWindow::SettingsWindow(ApplicationContext &ctx, QObject *parent) : QObject(parent), m_ctx(ctx) {}
 
@@ -32,16 +36,18 @@ void SettingsWindow::ensureInitialized() {
   m_themeBridge = new ThemeBridge(this);
   m_configBridge = new ConfigBridge(this);
   m_imgSource = new ImageSource(this);
+  m_keyboardBridge = new KeyboardBridge(this);
+  m_globalShortcutBridge = new GlobalShortcutBridge(this);
   m_generalModel = new GeneralSettingsModel(this);
   m_keybindModel = new KeybindSettingsModel(this);
   m_extensionModel = new ExtensionSettingsModel(this);
-
-  m_engine.addImageProvider(QStringLiteral("vicinae"), new AsyncImageProvider());
 
   auto *rootCtx = m_engine.rootContext();
   rootCtx->setContextProperty(QStringLiteral("Theme"), m_themeBridge);
   rootCtx->setContextProperty(QStringLiteral("Config"), m_configBridge);
   rootCtx->setContextProperty(QStringLiteral("Img"), m_imgSource);
+  rootCtx->setContextProperty(QStringLiteral("Keyboard"), m_keyboardBridge);
+  rootCtx->setContextProperty(QStringLiteral("GlobalShortcuts"), m_globalShortcutBridge);
   rootCtx->setContextProperty(QStringLiteral("settings"), this);
   rootCtx->setContextProperty(QStringLiteral("FileChooser"),
                               ServiceRegistry::instance()->fileChooserService());
@@ -52,7 +58,13 @@ void SettingsWindow::ensureInitialized() {
           &SettingsWindow::updateSidebarEnabled);
   rebuildSidebarExtensions();
 
-  m_engine.load(QUrl(QStringLiteral("qrc:/Vicinae/SettingsWindow.qml")));
+  m_engine.load(QUrl(
+#ifdef Q_OS_MACOS
+      QStringLiteral("qrc:/Vicinae/SettingsWindowMacOS.qml")
+#else
+      QStringLiteral("qrc:/Vicinae/SettingsWindow.qml")
+#endif
+          ));
 
   auto rootObjects = m_engine.rootObjects();
   if (!rootObjects.isEmpty()) { m_window = qobject_cast<QQuickWindow *>(rootObjects.first()); }
@@ -61,11 +73,7 @@ void SettingsWindow::ensureInitialized() {
     connect(m_window, &QQuickWindow::visibleChanged, this, [this](bool visible) {
       if (!visible) m_ctx.settings->closeWindow();
     });
-    connect(m_window, &QQuickWindow::widthChanged, this, &SettingsWindow::updateBlur);
-    connect(m_window, &QQuickWindow::heightChanged, this, &SettingsWindow::updateBlur);
   }
-
-  connect(m_ctx.services->config(), &config::Manager::configChanged, this, &SettingsWindow::updateBlur);
 }
 
 void SettingsWindow::setCurrentPage(const QString &page) {
@@ -124,6 +132,11 @@ QString SettingsWindow::commitHash() const { return QStringLiteral(VICINAE_GIT_C
 QString SettingsWindow::buildInfo() const { return QStringLiteral(BUILD_INFO); }
 QString SettingsWindow::headline() const { return Omnicast::HEADLINE; }
 
+bool SettingsWindow::globalShortcutsSupported() const {
+  auto *service = ServiceRegistry::instance()->globalShortcuts();
+  return service && service->isSupported();
+}
+
 void SettingsWindow::openUrl(const QString &url) { m_ctx.services->appDb()->openTarget(url); }
 
 void SettingsWindow::close() {
@@ -138,7 +151,9 @@ void SettingsWindow::show() {
   m_window->show();
   m_window->raise();
   m_window->requestActivate();
-  updateBlur();
+#ifdef Q_OS_MACOS
+  macosActivateApp();
+#endif
 }
 
 void SettingsWindow::hide() {
@@ -319,17 +334,3 @@ QVariantList SettingsWindow::filterSidebarItems(const QString &query) const {
   return result;
 }
 // NOLINTEND(cppcoreguidelines-avoid-magic-numbers)
-
-void SettingsWindow::updateBlur() {
-  if (!m_window) return;
-  auto &cfg = m_ctx.services->config()->value();
-  auto *bgEffect = m_ctx.services->backgroundEffectManager();
-  if (!bgEffect->supportsBlur()) return;
-
-  if (cfg.launcherWindow.blur.enabled) {
-    QRect const region(0, 0, m_window->width(), m_window->height());
-    bgEffect->setBlur(m_window, {.radius = 10, .region = region});
-  } else {
-    bgEffect->clearBlur(m_window);
-  }
-}

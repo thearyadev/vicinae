@@ -1,11 +1,15 @@
 import QtQuick
 
-Rectangle {
+Item {
     id: root
     property bool loading: false
-    color: Theme.divider
+    clip: true
 
     property bool _active: false
+
+    ViciDivider {
+        anchors.fill: parent
+    }
 
     Rectangle {
         id: bar
@@ -22,7 +26,7 @@ Rectangle {
         property: "x"
         from: -bar.width
         to: root.width
-        duration: (root.width + bar.width) / 10 * 10  // match C++: 10px per 10ms
+        duration: (root.width + bar.width) / 10 * 10
         loops: Animation.Infinite
         running: root._active
     }

@@ -3,66 +3,84 @@
 #include "keybind-bridge.hpp"
 #include "view-utils.hpp"
 #include "action-panel-controller.hpp"
+#include "ui/action-pannel/action.hpp"
+#include "ui/image/image-renderer.hpp"
+#include "services/news/news-service.hpp"
 #include "alert-model.hpp"
-#include "async-image-provider.hpp"
 #include "bridge-view.hpp"
 #include "image-source.hpp"
 #include "image-url.hpp"
-#include "root-search-model.hpp"
 #include "config-bridge.hpp"
 #include "theme-bridge.hpp"
 #include "navigation-controller.hpp"
 #include "overlay-controller/overlay-controller.hpp"
+#include "extensions/vicinae/bug-report-url.hpp"
+#include "qml/vicinae-store-view-host.hpp"
 #include "settings-controller/settings-controller.hpp"
 #include "services/keybinding/keybinding-service.hpp"
 #include "services/toast/toast-service.hpp"
 #include "config/config.hpp"
 #include "service-registry.hpp"
-#include "services/background-effect/background-effect-manager.hpp"
+#include "services/app-service/app-service.hpp"
 #include "services/file-chooser/file-chooser-service.hpp"
 #include "services/window-manager/window-manager.hpp"
 #include "environment.hpp"
 #include "vicinae.hpp"
-#include "lib/keyboard/keyboard.hpp"
+#include "internal/keyboard/keyboard.hpp"
 #include "ui/views/base-view.hpp"
+#include "ui/action-pannel/action-panel-state.hpp"
+#include <QCursor>
 #include <QGuiApplication>
 #include <QQmlContext>
 #include <QQuickWindow>
+#include <QScreen>
 #include <QWindow>
 #include <QKeyEvent>
-#ifdef WAYLAND_LAYER_SHELL
-#include <LayerShellQt/Window>
-#include <utility>
+#include <qcoreevent.h>
+#include <qlogging.h>
+#include <memory>
+
+#ifdef __GLIBC__
+#include <malloc.h>
 #endif
 
 LauncherWindow::LauncherWindow(ApplicationContext &ctx, QObject *parent)
     : QObject(parent), m_ctx(ctx), m_actionPanel(new ActionPanelController(ctx, this)),
+      m_footerPanel(new ActionPanelController(ctx, this)),
       m_alertModel(new AlertModel(*ctx.navigation, this)), m_configBridge(new ConfigBridge(this)),
       m_imgSource(new ImageSource(this)), m_keybindProxy(new KeybindBridge(this)),
       m_themeBridge(new ThemeBridge(this)) {
 
+#ifndef Q_OS_MACOS
   // Ensure Wayland app_id / X11 WM_CLASS is "vicinae"
   QGuiApplication::setDesktopFileName(QStringLiteral("vicinae"));
-
-  m_searchModel = new RootSearchModel(ViewScope(&ctx, ctx.navigation->topState()->sender), this);
+#endif
 
   qRegisterMetaType<ImageUrl>("ImageUrl");
 
-  m_engine.addImageProvider(QStringLiteral("vicinae"), new AsyncImageProvider());
-
   auto *rootCtx = m_engine.rootContext();
   rootCtx->setContextProperty(QStringLiteral("Nav"), ctx.navigation.get());
-  rootCtx->setContextProperty(QStringLiteral("searchModel"), m_searchModel);
   rootCtx->setContextProperty(QStringLiteral("Theme"), m_themeBridge);
   rootCtx->setContextProperty(QStringLiteral("Config"), m_configBridge);
   rootCtx->setContextProperty(QStringLiteral("Img"), m_imgSource);
 
   rootCtx->setContextProperty(QStringLiteral("launcher"), this);
   rootCtx->setContextProperty(QStringLiteral("actionPanel"), m_actionPanel);
+  rootCtx->setContextProperty(QStringLiteral("footerPanel"), m_footerPanel);
   rootCtx->setContextProperty(QStringLiteral("Keybinds"), m_keybindProxy);
   rootCtx->setContextProperty(QStringLiteral("FileChooser"), ctx.services->fileChooserService());
 
-  m_engine.load(QUrl(QStringLiteral("qrc:/Vicinae/LauncherWindow.qml")));
+  updateLayerShellProps();
+  buildFooterMenu();
+
+  m_engine.load(QUrl(
+#ifdef Q_OS_MACOS
+      QStringLiteral("qrc:/Vicinae/LauncherWindowMacOS.qml")
+#else
+      isLayerShellActive() ? QStringLiteral("qrc:/Vicinae/LauncherWindowLayerShell.qml")
+                           : QStringLiteral("qrc:/Vicinae/LauncherWindow.qml")
+#endif
+          ));
 
   auto rootObjects = m_engine.rootObjects();
   if (!rootObjects.isEmpty()) { m_window = qobject_cast<QQuickWindow *>(rootObjects.first()); }
@@ -83,6 +101,24 @@ LauncherWindow::LauncherWindow(ApplicationContext &ctx, QObject *parent)
             [this]() { m_ctx.navigation->setWindowActivated(m_window->isActive()); });
     m_window->installEventFilter(this);
   }
+
+  using namespace std::chrono_literals;
+
+  // Sometime after we close the window, we release some of our cached resources to lower
+  // memory usage.
+  static constexpr auto CACHE_EVICTION_DELAY = 10s;
+
+  m_cacheEvictionTimer.setSingleShot(true);
+  m_cacheEvictionTimer.setInterval(CACHE_EVICTION_DELAY);
+
+  connect(&m_cacheEvictionTimer, &QTimer::timeout, this, [this]() {
+    if (m_window) m_window->releaseResources();
+    m_engine.trimComponentCache();
+    ImageRendering::clearCache();
+#ifdef __GLIBC__
+    malloc_trim(0);
+#endif
+  });
 
   m_closeOnFocusLoss = ctx.services->config()->value().closeOnFocusLoss;
 
@@ -138,7 +174,7 @@ LauncherWindow::LauncherWindow(ApplicationContext &ctx, QObject *parent)
     }
   });
 
-  // Search state — programmatic text changes (e.g. from extensions)
+  // Search state: programmatic text changes (e.g. from extensions)
   connect(nav, &NavigationController::searchTextTampered, this, [this](const QString &text) {
     emit searchTextUpdated(text);
     tryCompaction();
@@ -151,17 +187,23 @@ LauncherWindow::LauncherWindow(ApplicationContext &ctx, QObject *parent)
     }
   });
 
-  connect(nav, &NavigationController::actionsChanged, this,
-          [this](const ActionPanelState &state) { m_actionPanel->setStateFrom(state); });
+  connect(nav, &NavigationController::activeActionPanelChanged, this,
+          [this, nav]() { m_actionPanel->syncToView(nav->topState()->sender); });
 
-  connect(nav, &NavigationController::viewPushed, this, [this, nav](const BaseView *) {
+  connect(nav, &NavigationController::viewPushed, this, [this](const BaseView *) {
     m_actionPanel->close();
-    nav->showWindow();
+    m_footerPanel->close();
+  });
+
+  connect(m_footerPanel, &ActionPanelController::openChanged, this, [this]() {
+    if (m_footerPanel->isOpen()) m_actionPanel->close();
+  });
+  connect(m_actionPanel, &ActionPanelController::openChanged, this, [this]() {
+    if (m_actionPanel->isOpen()) m_footerPanel->close();
   });
 
   connect(nav, &NavigationController::navigationStatusChanged, this,
           [this](const QString &title, const ImageURL &icon) {
-            qDebug() << "[NAV] title changed" << title;
             m_navigationTitle = title;
             m_navigationIcon = ImageUrl(icon);
             emit navigationStatusChanged();
@@ -277,18 +319,32 @@ LauncherWindow::LauncherWindow(ApplicationContext &ctx, QObject *parent)
 bool LauncherWindow::eventFilter(QObject *obj, QEvent *event) {
   if (obj != m_window) return QObject::eventFilter(obj, event);
 
-  if (event->type() == QEvent::KeyPress) {
+  // makes sure we keep our state in sync if the compositor is the one raising/closing the window for some
+  // reason. typically useful to handle close on focus loss on gnome with the gnome extension
+  if (event->type() == QEvent::Show) {
+    m_ctx.navigation->showWindow();
+  } else if (event->type() == QEvent::Hide) {
+    m_ctx.navigation->closeWindow();
+  }
+
+  else if (event->type() == QEvent::KeyPress) {
     auto *ke = static_cast<QKeyEvent *>(event); // NOLINT
+    // KeypadModifier marks key origin, not user intent; strip it so numpad
+    // arrows compare equal to main-keyboard arrows downstream.
+    if (ke->modifiers().testFlag(Qt::KeypadModifier)) {
+      ke->setModifiers(ke->modifiers() & ~Qt::KeypadModifier);
+    }
     if (forwardKey(ke->key(), static_cast<int>(ke->modifiers()))) { return true; }
   }
 
   // only works on some compositors.
   // we could probably make it work everywhere layer shell is supported by adding a layer behind ours.
-  if (event->type() == QEvent::MouseMove && m_closeOnFocusLoss) {
+  else if (event->type() == QEvent::MouseMove && m_closeOnFocusLoss) {
     auto *me = static_cast<QMouseEvent *>(event); // NOLINT
     QRect const contentRect(0, 0, m_window->width(), m_window->height());
     if (!contentRect.contains(me->position().toPoint())) { m_ctx.navigation->closeWindow(); }
   }
+
   return QObject::eventFilter(obj, event);
 }
 
@@ -296,6 +352,7 @@ void LauncherWindow::handleVisibilityChanged(bool visible) {
   if (!m_window) return;
 
   if (visible) {
+    m_cacheEvictionTimer.stop();
     applyWindowConfig();
     tryCompaction();
     m_window->show();
@@ -303,6 +360,7 @@ void LauncherWindow::handleVisibilityChanged(bool visible) {
     m_window->requestActivate();
   } else {
     m_window->hide();
+    m_cacheEvictionTimer.start();
   }
 }
 
@@ -319,39 +377,23 @@ void LauncherWindow::handleCurrentViewChanged() {
   m_viewWasPopped = false;
   m_viewWasReplaced = false;
 
-  if (nav->viewStackSize() == 1) {
-    disconnect(m_searchAccessoryConnection);
-    if (!m_searchAccessoryUrl.isEmpty()) {
-      m_searchAccessoryUrl.clear();
-      emit searchAccessoryChanged();
-    }
-    if (m_commandViewHost) {
-      m_commandViewHost = nullptr;
-      emit commandViewHostChanged();
-    }
-    if (!m_isRootSearch) {
-      m_isRootSearch = true;
-      emit isRootSearchChanged();
-    }
-    if (!m_showBackButton) {
-      m_showBackButton = true;
-      emit showBackButtonChanged();
-    }
-    if (m_overrideWidth != 0 || m_overrideHeight != 0) {
-      m_overrideWidth = 0;
-      m_overrideHeight = 0;
-      emit windowSizeOverrideChanged();
-    }
-    emit commandStackCleared();
-    tryCompaction();
-    return;
-  }
-
   auto *state = nav->topState();
   if (!state || !state->sender) return;
 
   auto *bridge = dynamic_cast<ViewHostBase *>(state->sender);
   if (!bridge) return;
+
+  bool const isRoot = nav->viewStackSize() == 1;
+  if (m_atRoot != isRoot) {
+    m_atRoot = isRoot;
+    emit atRootChanged();
+  }
+
+  if (m_overrideWidth != 0 || m_overrideHeight != 0) {
+    m_overrideWidth = 0;
+    m_overrideHeight = 0;
+    emit windowSizeOverrideChanged();
+  }
 
   disconnect(m_searchAccessoryConnection);
   m_searchAccessoryConnection =
@@ -383,11 +425,6 @@ void LauncherWindow::handleCurrentViewChanged() {
   } else {
     bridge->onReactivated();
   }
-
-  if (m_isRootSearch) {
-    m_isRootSearch = false;
-    emit isRootSearchChanged();
-  }
   tryCompaction();
 }
 
@@ -396,13 +433,7 @@ void LauncherWindow::forwardSearchText(const QString &text) {
   tryCompaction();
 }
 
-void LauncherWindow::handleReturn() {
-  if (!m_isRootSearch) {
-    m_actionPanel->executePrimaryAction();
-  } else {
-    m_searchModel->activateSelected();
-  }
-}
+void LauncherWindow::handleReturn() { m_actionPanel->executePrimaryAction(); }
 
 bool LauncherWindow::forwardKey(int key, int modifiers) {
   auto mods = static_cast<Qt::KeyboardModifiers>(modifiers);
@@ -434,8 +465,13 @@ bool LauncherWindow::forwardKey(int key, int modifiers) {
 
   QKeyEvent const event(QEvent::KeyPress, key, mods);
 
-  if (auto *action = m_actionPanel->findBoundAction(&event)) {
-    m_actionPanel->executeAction(action);
+  if (auto *action = m_ctx.navigation->findBoundAction(&event)) {
+    if (auto *submenu = dynamic_cast<SubmenuAction *>(action)) {
+      m_actionPanel->openSubmenu(submenu);
+    } else {
+      m_ctx.navigation->executeAction(action);
+      m_actionPanel->close();
+    }
     return true;
   }
 
@@ -469,8 +505,6 @@ void LauncherWindow::popToRoot() {
 
 bool LauncherWindow::popOnBackspace() { return m_ctx.services->config()->value().popOnBackspace; }
 
-bool LauncherWindow::tryAliasFastTrack() { return m_searchModel->tryAliasFastTrack(); }
-
 int LauncherWindow::matchNavigationKey(int key, int modifiers) {
   return KeyBindingService::matchNavigation(key, modifiers, m_ctx.services->config()->value().keybinding);
 }
@@ -483,36 +517,79 @@ void LauncherWindow::setCompleterValue(int index, const QString &value) {
   nav->setCompletionValues(values);
 }
 
+QRect LauncherWindow::cursorScreenGeometry() const {
+  auto *screen = QGuiApplication::screenAt(QCursor::pos());
+  if (!screen) screen = QGuiApplication::primaryScreen();
+  return screen ? screen->geometry() : QRect();
+}
+
+bool LauncherWindow::canPositionWindow() { return Environment::supportsArbitraryWindowPlacement(); }
+
+void LauncherWindow::positionOnCursorScreen() {
+  if (!m_window || !canPositionWindow()) return;
+  const QRect g = cursorScreenGeometry();
+  m_window->setX(g.x() + (g.width() - m_window->width()) / 2);
+  m_window->setY(g.y() + (g.height() - m_window->height()) / 3);
+}
+
+void LauncherWindow::openFooterMenu() { m_footerPanel->toggle(); }
+
+void LauncherWindow::buildFooterMenu() {
+  auto state = std::make_unique<ActionPanelState>();
+  state->setAutoSelectPrimary(false);
+  state->setTitle(QStringLiteral("Vicinae"));
+  state->setId(QStringLiteral("footer-menu"));
+
+  auto *appSection = state->createSection();
+  appSection->addAction(new StaticAction(QStringLiteral("Open Settings"), ImageURL::builtin("cog"),
+                                         [](ApplicationContext *ctx) {
+                                           ctx->navigation->closeWindow();
+                                           ctx->settings->openWindow();
+                                         }));
+  appSection->addAction(new StaticAction(QStringLiteral("Keyboard Shortcuts"), ImageURL::builtin("keyboard"),
+                                         [](ApplicationContext *ctx) {
+                                           ctx->navigation->closeWindow();
+                                           ctx->settings->openTab(QStringLiteral("shortcuts"));
+                                         }));
+  appSection->addAction(new StaticAction(QStringLiteral("Extension Store"), ImageURL::builtin("cart"),
+                                         [](ApplicationContext *ctx) {
+                                           ctx->navigation->popToRoot();
+                                           ctx->navigation->clearSearchText();
+                                           ctx->navigation->pushView(new VicinaeStoreViewHost);
+                                         }));
+
+  auto *helpSection = state->createSection();
+  helpSection->addAction(new StaticAction(QStringLiteral("Documentation"), ImageURL::builtin("book"),
+                                          [](ApplicationContext *ctx) {
+                                            ctx->services->appDb()->openTarget(Omnicast::DOC_URL);
+                                            ctx->navigation->showHud(QStringLiteral("Opened in browser"));
+                                          }));
+  helpSection->addAction(
+      new StaticAction(QStringLiteral("Report a Bug"), ImageURL::builtin("bug"), [](ApplicationContext *ctx) {
+        ctx->services->appDb()->openTarget(makeVicinaeBugReportUrl());
+        ctx->navigation->showHud(QStringLiteral("Opened in browser"));
+      }));
+  helpSection->addAction(new StaticAction(QStringLiteral("About Vicinae"), ImageURL::builtin("info-01"),
+                                          [](ApplicationContext *ctx) {
+                                            ctx->navigation->closeWindow();
+                                            ctx->settings->openTab(QStringLiteral("about"));
+                                          }));
+
+  m_footerPanel->setActions(std::move(state));
+}
+
 void LauncherWindow::expand() { setCompacted(false); }
 
 void LauncherWindow::setCompacted(bool value) {
   if (m_compacted == value) return;
   m_compacted = value;
   emit compactedChanged();
-  updateBlur();
 }
 
 void LauncherWindow::tryCompaction() {
   auto &cfg = m_ctx.services->config()->value().launcherWindow.compactMode;
-  setCompacted(cfg.enabled && m_ctx.navigation->searchText().isEmpty() &&
-               m_ctx.navigation->viewStackSize() == 1);
-}
-
-void LauncherWindow::updateBlur() {
-  if (!m_window) return;
-  auto &cfg = m_ctx.services->config()->value().launcherWindow;
-  auto *bgEffect = m_ctx.services->backgroundEffectManager();
-  int const rounding = cfg.clientSideDecorations.enabled ? cfg.clientSideDecorations.rounding : 0;
-
-  if (!bgEffect->supportsBlur()) return;
-
-  if (cfg.blur.enabled) {
-    QRect region(0, 0, m_window->width(), m_window->height());
-    if (m_compacted) region.setHeight(60 + 2 * cfg.clientSideDecorations.borderWidth);
-    bgEffect->setBlur(m_window, {.radius = rounding, .region = region});
-  } else {
-    bgEffect->clearBlur(m_window);
-  }
+  setCompacted(!m_ctx.services->newsService()->hasUnreadNews() && cfg.enabled &&
+               m_ctx.navigation->searchText().isEmpty() && m_ctx.navigation->viewStackSize() == 1);
 }
 
 bool LauncherWindow::isLayerShellActive() const {
@@ -525,42 +602,41 @@ bool LauncherWindow::isLayerShellActive() const {
 }
 
 void LauncherWindow::setExclusiveFocus(bool exclusive) {
-#ifdef WAYLAND_LAYER_SHELL
-  if (!m_window || !isLayerShellActive()) return;
+  if (!isLayerShellActive()) return;
 
-  namespace Shell = LayerShellQt;
   const auto &lc = m_ctx.services->config()->value().launcherWindow.layerShell;
-  if (auto *lshell = Shell::Window::get(m_window)) {
-    if (exclusive && lc.keyboardInteractivity == "exclusive")
-      lshell->setKeyboardInteractivity(Shell::Window::KeyboardInteractivityExclusive);
-    else
-      lshell->setKeyboardInteractivity(Shell::Window::KeyboardInteractivityOnDemand);
+  int ki = (exclusive && lc.keyboardInteractivity == "exclusive") ? 1 : 2; // Exclusive : OnDemand
+  if (m_lsKeyboardInteractivity != ki) {
+    m_lsKeyboardInteractivity = ki;
+    emit lsChanged();
   }
-#else
-  Q_UNUSED(exclusive)
-#endif
 }
 
 void LauncherWindow::applyWindowConfig() {
   if (!m_window) return;
-  auto &cfg = m_ctx.services->config()->value().launcherWindow;
+  auto &wcfg = m_ctx.services->config()->value().launcherWindow;
 
-  updateBlur();
-  m_ctx.services->windowManager()->provider()->setDimAround(cfg.dimAround);
+  updateLayerShellProps();
+}
 
-#ifdef WAYLAND_LAYER_SHELL
-  const auto &lc = cfg.layerShell;
-  if (Environment::isLayerShellSupported() && lc.enabled) {
-    namespace Shell = LayerShellQt;
-    if (auto *lshell = Shell::Window::get(m_window)) {
-      lshell->setLayer(lc.layer == "overlay" ? Shell::Window::LayerOverlay : Shell::Window::LayerTop);
-      lshell->setScope(Omnicast::LAYER_SCOPE);
-      lshell->setWantsToBeOnActiveScreen(true);
-      lshell->setAnchors(Shell::Window::AnchorNone);
-      lshell->setKeyboardInteractivity(lc.keyboardInteractivity == "exclusive"
-                                           ? Shell::Window::KeyboardInteractivityExclusive
-                                           : Shell::Window::KeyboardInteractivityOnDemand);
-    }
+void LauncherWindow::updateLayerShellProps() {
+  if (!isLayerShellActive()) return;
+
+  auto &cfg = m_ctx.services->config()->value();
+  const auto &lc = cfg.launcherWindow.layerShell;
+
+  int layer = (lc.layer == "overlay") ? 3 : 2;                                  // LayerOverlay : LayerTop
+  int ki = 2;                                                                   // OnDemand
+  if (lc.keyboardInteractivity == "exclusive" && !cfg.closeOnFocusLoss) ki = 1; // Exclusive
+
+  bool changed = false;
+  if (m_lsLayer != layer) {
+    m_lsLayer = layer;
+    changed = true;
   }
-#endif
+  if (m_lsKeyboardInteractivity != ki) {
+    m_lsKeyboardInteractivity = ki;
+    changed = true;
+  }
+  if (changed) emit lsChanged();
 }

@@ -8,6 +8,7 @@ class GeneralSettingsModel : public QObject {
   Q_OBJECT
 
   Q_PROPERTY(bool searchFilesInRoot READ searchFilesInRoot WRITE setSearchFilesInRoot NOTIFY configChanged)
+  Q_PROPERTY(bool inputServerEnabled READ inputServerEnabled WRITE setInputServerEnabled NOTIFY configChanged)
   Q_PROPERTY(bool closeOnFocusLoss READ closeOnFocusLoss WRITE setCloseOnFocusLoss NOTIFY configChanged)
   Q_PROPERTY(bool considerPreedit READ considerPreedit WRITE setConsiderPreedit NOTIFY configChanged)
   Q_PROPERTY(bool popToRootOnClose READ popToRootOnClose WRITE setPopToRootOnClose NOTIFY configChanged)
@@ -18,6 +19,7 @@ class GeneralSettingsModel : public QObject {
       bool telemetrySystemInfo READ telemetrySystemInfo WRITE setTelemetrySystemInfo NOTIFY configChanged)
   Q_PROPERTY(bool clientSideDecorations READ clientSideDecorations WRITE setClientSideDecorations NOTIFY
                  configChanged)
+  Q_PROPERTY(bool compactMode READ compactMode WRITE setCompactMode NOTIFY configChanged)
   Q_PROPERTY(QString windowOpacity READ windowOpacity WRITE setWindowOpacity NOTIFY configChanged)
   Q_PROPERTY(
       bool nativeTextRendering READ nativeTextRendering WRITE setNativeTextRendering NOTIFY configChanged)
@@ -32,6 +34,7 @@ class GeneralSettingsModel : public QObject {
   Q_PROPERTY(QVariant currentIconTheme READ currentIconTheme NOTIFY configChanged)
   Q_PROPERTY(QVariant currentFaviconService READ currentFaviconService NOTIFY configChanged)
   Q_PROPERTY(QVariant currentKeybindingScheme READ currentKeybindingScheme NOTIFY configChanged)
+  Q_PROPERTY(QString toggleShortcut READ toggleShortcut WRITE setToggleShortcut NOTIFY configChanged)
 
 signals:
   void configChanged();
@@ -55,10 +58,14 @@ public:
   void setTelemetrySystemInfo(bool v);
   bool clientSideDecorations() const;
   void setClientSideDecorations(bool v);
+  bool compactMode() const;
+  void setCompactMode(bool v);
   QString windowOpacity() const;
   void setWindowOpacity(const QString &v);
   bool nativeTextRendering() const;
   void setNativeTextRendering(bool v);
+  bool inputServerEnabled() const;
+  void setInputServerEnabled(bool v);
   QString fontSize() const;
   void setFontSize(const QString &v);
 
@@ -78,6 +85,9 @@ public:
   Q_INVOKABLE void selectIconTheme(const QString &id);
   Q_INVOKABLE void selectFaviconService(const QString &id);
   Q_INVOKABLE void selectKeybindingScheme(const QString &id);
+
+  QString toggleShortcut() const;
+  void setToggleShortcut(const QString &shortcut);
 
 private:
   const config::ConfigValue &cfg() const;

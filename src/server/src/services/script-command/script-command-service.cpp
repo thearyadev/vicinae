@@ -1,8 +1,7 @@
 #include "script-command-service.hpp"
 #include "script/script-scanner.hpp"
-#include "xdgpp/env/env.hpp"
+#include "vicinae.hpp"
 #include <algorithm>
-#include <ranges>
 #include <QtConcurrentRun>
 
 ScriptCommandService::ScriptCommandService() {
@@ -34,14 +33,15 @@ void ScriptCommandService::setCustomScriptPaths(const std::vector<std::filesyste
 }
 
 const std::vector<std::filesystem::path> &ScriptCommandService::defaultScriptDirectories() const {
-  static const auto dirs = xdgpp::commonDataDirs() |
-                           std::views::transform([](auto &&p) { return p / "vicinae" / "scripts"; }) |
-                           std::ranges::to<std::vector>();
+  static const auto dirs = Omnicast::dataSearchPaths("scripts");
   return dirs;
 }
 
 std::vector<std::filesystem::path> ScriptCommandService::scriptDirectories() const {
-  return std::views::concat(m_customScriptPaths, defaultScriptDirectories()) | std::ranges::to<std::vector>();
+  auto result = m_customScriptPaths;
+  auto defaults = defaultScriptDirectories();
+  result.insert(result.end(), defaults.begin(), defaults.end());
+  return result;
 }
 
 const std::vector<std::shared_ptr<ScriptCommandFile>> &ScriptCommandService::scripts() const {
@@ -59,7 +59,8 @@ void ScriptCommandService::updateWatchedPaths() {
   for (const QString &dir : m_watcher->directories()) {
     m_watcher->removePath(dir);
   }
-  for (const auto &path : std::views::concat(m_customScriptPaths, defaultScriptDirectories())) {
+  for (const auto &path : m_customScriptPaths)
     m_watcher->addPath(path.c_str());
-  }
+  for (const auto &path : defaultScriptDirectories())
+    m_watcher->addPath(path.c_str());
 }

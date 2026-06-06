@@ -3,34 +3,36 @@ set(CMAKE_AUTORCC ON)
 set(LIBS)
 set(TARGET vicinae-server)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Sql Network Svg DBus Concurrent Quick Qml GuiPrivate QuickDialogs2 QuickControls2)
+find_package(Qt6 REQUIRED COMPONENTS Core Network Svg DBus Concurrent Quick Qml GuiPrivate QuickDialogs2 QuickControls2 ShaderTools)
 find_package(OpenSSL REQUIRED)
-find_package(LibXml2 REQUIRED)
-if (USE_SYSTEM_KF6)
+
+if (USE_SYSTEM_KF6 AND NOT APPLE)
 	find_package(KF6SyntaxHighlighting REQUIRED)
 endif()
 
-list(APPEND LIBS  
-	Qt6::Sql Qt6::Network Qt6::Svg Qt6::DBus Qt6::Concurrent Qt6::Quick Qt6::Qml
+list(APPEND LIBS
+	Qt6::Network Qt6::Svg Qt6::DBus Qt6::Concurrent Qt6::Quick Qt6::Qml
 	Qt6::GuiPrivate # for deeper integration with wayland protocols, we need wl_surface
 	Qt6::QuickDialogs2 Qt6::QuickControls2
-	${CMARK_LIBRARY} ${CMARK_EXT_LIBRARY} 
-	protobuf::libprotobuf
-	minizip 
-	OpenSSL::Crypto 
-	wayland-client 
+	${CMARK_LIBRARY} ${CMARK_EXT_LIBRARY}
+	zip
+	OpenSSL::Crypto
 	qt6keychain
-	LibXml2::LibXml2
+	pugixml
 	KF6::SyntaxHighlighting
 	glaze::glaze
 	vicinae::xdgpp
 	vicinae::scriptcommand
-	vicinae::emoji
-	vicinae::ipc
-	vicinae::snippet-types
+	vicinae::glyph
 	vicinae::common
-	vicinae::linuxutils
+	vicinae::fuzzy
+	sqlcipher
 )
+
+if (UNIX AND NOT APPLE)
+	list(APPEND LIBS wayland-client)
+endif()
+
 
 set(ASSET_PATH ${CMAKE_CURRENT_SOURCE_DIR}/assets)
 set(EXTRA_PATH ${CMAKE_SOURCE_DIR}/extra)
@@ -42,7 +44,6 @@ endif()
 
 if (WAYLAND_LAYER_SHELL)
 	message(STATUS "Compiling with wayland layer shell support (for wlroots-like compositors)")
-	#find_package(Qt6 REQUIRED COMPONENTS WaylandClient)
 	if (USE_SYSTEM_LAYER_SHELL)
 		find_package(LayerShellQt REQUIRED)
 		list(APPEND LIBS LayerShellQt::Interface)
@@ -59,16 +60,12 @@ else()
 endif()
 
 include_directories(
-	${CMAKE_CURRENT_SOURCE_DIR}/include
 	${CMAKE_CURRENT_SOURCE_DIR}/src
-	${CMAKE_CURRENT_SOURCE_DIR}/src/lib
+	${CMAKE_CURRENT_SOURCE_DIR}/src/internal
 	${CMAKE_CURRENT_SOURCE_DIR}/src/utils
 	${CMAKE_CURRENT_SOURCE_DIR}/..
-	${Protobuf_INCLUDE_DIRS}
     ${CMAKE_CURRENT_BINARY_DIR}  # For generated headers
 )
-
-file(GLOB PROTO_FILES "${PROTO_DIR}/*.proto")
 
 set(SRCS
 	src/main.cpp
@@ -87,23 +84,23 @@ set(SRCS
 	src/placeholder.cpp
 
 
-	include/font-service.hpp
+	src/font-service.hpp
 	src/font-service.cpp
 
-	#src/daemon/ipc-client.cpp
-	src/lib/template-engine/template-engine.cpp
+	src/internal/template-engine/template-engine.cpp
+	src/internal/glaze-qt.cpp
 
-	include/favicon/favicon-service.hpp
+	src/favicon/favicon-service.hpp
 	src/favicon/favicon-service.cpp
-	include/favicon/favicon-request.hpp
+	src/favicon/favicon-request.hpp
 	src/favicon/favicon-request.cpp
-	include/favicon/google-favicon-request.hpp
+	src/favicon/google-favicon-request.hpp
 	src/favicon/google-favicon-request.cpp
-	include/favicon/twenty-favicon-request.hpp
+	src/favicon/twenty-favicon-request.hpp
 	src/favicon/twenty-favicon-request.cpp
-	include/favicon/dummy-favicon-request.hpp
+	src/favicon/dummy-favicon-request.hpp
 	src/favicon/dummy-favicon-request.cpp
-	include/favicon/cached-favicon-request.hpp
+	src/favicon/cached-favicon-request.hpp
 	src/favicon/cached-favicon-request.cpp
 
 
@@ -122,6 +119,8 @@ set(SRCS
 	# Bookmark - Start
 	src/services/shortcut/shortcut-service.hpp
 	src/services/shortcut/shortcut-service.cpp
+	src/services/shortcut/shortcut-db.hpp
+	src/services/shortcut/shortcut-db.cpp
 	src/services/shortcut/shortcut.hpp
 	src/services/shortcut/shortcut.cpp
 
@@ -140,9 +139,6 @@ set(SRCS
 	src/actions/app/app-actions.cpp
 	
 	src/service-registry.cpp
-
-	src/services/background-effect/ext-background-effect-v1-manager.cpp
-	src/services/background-effect/kde-background-effect-manager.cpp
 
 	src/color-formatter.hpp
 	src/color-formatter.cpp
@@ -178,24 +174,31 @@ set(SRCS
 	src/services/app-service/xdg/xdg-app-database.cpp
 	src/services/app-service/xdg/xdg-app.cpp
 	src/services/app-service/abstract-app-db.hpp
+	src/services/app-service/dummy-app-database.hpp
 
 	# end app-database
 
-	include/ui/action-pannel/action.hpp
+	src/ui/action-pannel/action.hpp
 	src/ui/action-pannel/action.cpp
+	src/ui/action-pannel/action-panel-state.hpp
+	src/ui/action-pannel/action-panel-view.hpp
+	src/ui/action-pannel/action-list-view.hpp
+	src/ui/action-pannel/action-list-view.cpp
 
-	src/lib/crypto.cpp
+	src/internal/crypto.cpp
 
 	
-	include/extension/extension-command.hpp
+	src/extension/extension-command.hpp
 
 	src/extension/extension-action-panel-builder.hpp
 	src/extension/extension-action-panel-builder.cpp
+	src/extension/extension-action-list-view.hpp
+	src/extension/extension-action-list-view.cpp
 
-	include/extension/extension.hpp
+	src/extension/extension.hpp
 	src/extension/extension.cpp
 
-	include/extension/extension-command.hpp
+	src/extension/extension-command.hpp
 	src/extension/extension-command.cpp
 
 
@@ -204,46 +207,25 @@ set(SRCS
 	src/ui/omni-painter/omni-painter.cpp
 
 	src/ui/image/url.cpp
-	src/ui/image/image.hpp
-	src/ui/image/static-image-loader.cpp
-	src/ui/image/animated-image-loader.cpp
-	src/ui/image/io-image-loader.cpp
-	src/ui/image/local-image-loader.cpp
-	src/ui/image/http-image-loader.cpp
-	src/ui/image/data-uri-image-loader.cpp
-	src/ui/image/favicon-image-loader.cpp
-	src/ui/image/svg-image-loader.cpp
-	src/ui/image/builtin-icon-loader.cpp
-	src/ui/image/qicon-image-loader.cpp
-	src/ui/image/emoji-image-loader.cpp
-	src/ui/image/image-decoder.hpp
+	src/ui/image/image-renderer.hpp
+	src/ui/image/image-renderer.cpp
+	src/ui/image/image-stream.hpp
+	src/ui/image/image-stream.cpp
 
-	include/command-database.hpp
+	src/command-database.hpp
 	src/command-database.cpp
 
 		src/ui/image/url.hpp
 
 
-	include/create-quicklink-command.hpp
+	src/create-quicklink-command.hpp
 
 	src/builtin_icon.cpp
 
 
 	src/extend/accessory-model.cpp
-	src/extend/action-shortcut-parser.cpp
-	src/extend/action-model.cpp
-	src/extend/color-model.cpp
-	src/extend/detail-model.cpp
-	src/extend/image-model.cpp
-	src/extend/grid-model.cpp
-	src/extend/list-model.cpp
-	src/extend/metadata-model.cpp
-	src/extend/model-parser.cpp
-	src/extend/tag-list.cpp
-	src/extend/root-detail-model.cpp
-	src/extend/empty-view-model.cpp
-	include/extend/form-model.hpp
-	src/extend/form-model.cpp
+	src/extend/model-deser.cpp
+	src/extend/form-model.hpp
 
 	src/image-fetcher.hpp
 
@@ -261,16 +243,14 @@ set(SRCS
 
 	./database/vicinae/migrations.qrc
 	./database/clipboard/migrations.qrc
-	./database/file-indexer//migrations.qrc
 
 
-	src/lib/keyboard/keybind-manager.hpp
-	src/lib/keyboard/keybind-manager.cpp
-	src/lib/keyboard/keyboard.cpp
+	src/internal/keyboard/keybind-manager.hpp
+	src/internal/keyboard/keybind-manager.cpp
+	src/internal/keyboard/keyboard.cpp
 
 	src/theme/theme-file.hpp
 	src/theme/theme-file.cpp
-	src/theme/theme-parser.hpp
 	src/theme/theme-parser.cpp
 	src/theme/theme-db.hpp
 	src/theme/theme-db.cpp
@@ -282,6 +262,8 @@ set(SRCS
 
 	src/extensions/clipboard/clipboard-extension.hpp
 	src/extensions/clipboard/clipboard-extension.cpp
+
+	src/extensions/snippet/snippet-extension.cpp
 
 	src/extensions/vicinae/refresh-apps-command.hpp
 	src/extensions/vicinae/refresh-apps-command.cpp
@@ -316,8 +298,7 @@ set(SRCS
 	src/qml/provider-search-view-host.hpp
 	src/qml/provider-search-view-host.cpp
 
-	src/cli/cli.cpp
-	src/cli/server.cpp
+	src/server.cpp
 
 
 	src/utils/utils.cpp
@@ -336,8 +317,8 @@ set(SRCS
 	src/services/app-service/app-service.hpp
 	src/services/app-service/app-service.cpp
 
-	src/services/emoji-service/emoji-service.hpp
-	src/services/emoji-service/emoji-service.cpp
+	src/services/glyph-service/glyph-service.hpp
+	src/services/glyph-service/glyph-service.cpp
 
 
 
@@ -345,23 +326,9 @@ set(SRCS
 	src/services/calculator-service/calculator-service.cpp
 
 	src/services/files-service/abstract-file-indexer.hpp
+	src/services/files-service/dummy-file-indexer.hpp
 	src/services/files-service/file-service.hpp
 	src/services/files-service/file-service.cpp
-	src/services/files-service/file-indexer/file-indexer.hpp
-	src/services/files-service/file-indexer/file-indexer.cpp
-	src/services/files-service/file-indexer/filesystem-walker.cpp
-	src/services/files-service/file-indexer/relevancy-scorer.cpp
-	src/services/files-service/file-indexer/incremental-scanner.cpp
-	src/services/files-service/file-indexer/indexer-scanner.cpp
-	src/services/files-service/file-indexer/watcher-scanner.cpp
-	src/services/files-service/file-indexer/home-directory-watcher.cpp
-	src/services/files-service/file-indexer/file-indexer-db.cpp
-	src/services/files-service/file-indexer/db-writer.cpp
-	src/services/files-service/file-indexer/writer-worker.hpp
-	src/services/files-service/file-indexer/writer-worker.cpp
-	src/services/files-service/file-indexer/scan-dispatcher.cpp
-	src/services/files-service/file-indexer/abstract-scanner.hpp
-	src/services/files-service/file-indexer/file-indexer-query-engine.hpp
 
 	src/services/extension-registry/extension-registry.hpp
 	src/services/extension-registry/extension-registry.cpp
@@ -383,7 +350,6 @@ set(SRCS
 	src/navigation-controller.cpp
 
 	src/ui/views/base-view.cpp
-	#src/ui/views/form-view.cpp
 
 	src/command-controller.hpp
 	src/command-controller.cpp
@@ -393,17 +359,13 @@ set(SRCS
 	src/ipc-command-handler.hpp
 	src/ipc-command-handler.cpp
 
+	src/extension-interval-scheduler.hpp
+	src/extension-interval-scheduler.cpp
+
 	src/log/message-handler.cpp
 
-	src/extension/requests/storage-request-router.cpp
-	src/extension/requests/ui-request-router.cpp
-	src/extension/requests/oauth-router.cpp
-	src/extension/requests/file-search-request-router.cpp
-	src/extension/requests/app-request-router.cpp
-	src/extension/requests/clipboard-request-router.cpp
-	src/extension/requests/command-request-router.cpp
-	src/extension/requests/wm-router.cpp
 	src/extension/extension-command-runtime.cpp
+	src/extension/services/ui-service.hpp
 
 	src/extensions/vicinae/vicinae-extension.cpp
 
@@ -418,9 +380,9 @@ set(SRCS
 	src/overlay-controller/overlay-controller.hpp
 
 
-	src/lib/zip/unzip.cpp
-	src/lib/data-uri/data-uri.cpp
-	src/lib/pid-file/pid-file.cpp
+	src/internal/zip/unzip.cpp
+	src/internal/data-uri/data-uri.cpp
+	src/internal/pid-file/pid-file.cpp
 
 	src/ui/alert/alert.hpp
 	src/ui/alert/alert.cpp
@@ -428,7 +390,7 @@ set(SRCS
 	src/ui/dialog/dialog.hpp
 	src/ui/dialog/dialog.cpp
 
-	src/lib/os-release.cpp
+	src/internal/os-release.cpp
 
 	src/services/window-manager/window-manager.cpp
 
@@ -436,12 +398,21 @@ set(SRCS
 
 	src/services/window-manager/abstract-window-manager.hpp
 	src/services/paste/abstract-paste-service.hpp
+	src/services/paste/dummy-paste-service.hpp
+	src/services/paste/paste-service.cpp
 	src/services/browser-extension-service.hpp
 
-	src/lib/program-db/program-db.hpp
-	src/lib/program-db/program-db.cpp
+	src/internal/program-db/program-db.hpp
+	src/internal/program-db/program-db.cpp
 
 	src/services/power-manager/systemd/systemd-power-manager.cpp
+	src/services/power-manager/dummy-power-manager.hpp
+
+	src/services/desktop-notification/freedesktop/freedesktop-notification-client.cpp
+	src/services/desktop-notification/dummy-desktop-notification-client.hpp
+
+	src/services/audio-control/pactl/pactl-audio-control.cpp
+	src/services/audio-control/dummy-audio-control.hpp
 
 	src/config/config.hpp
 	src/config/config.cpp
@@ -463,19 +434,29 @@ set(SRCS
 	src/services/telemetry/telemetry-service.cpp
 
 	src/services/snippet/snippet-service.hpp
-	src/services/snippet/snippet-server.hpp
+	src/services/snippet/abstract-snippet-server.hpp
+	src/services/snippet/null-snippet-server.hpp
 	src/services/snippet/snippet-db.cpp
 
-	# QML frontend (POC)
+	# QML frontend
 	src/qml/keybind-bridge.hpp
 	src/qml/launcher-window.hpp
 	src/qml/launcher-window.cpp
+	src/qml/root-view-host.hpp
+	src/qml/root-view-host.cpp
 	src/qml/root-search-model.hpp
 	src/qml/root-search-model.cpp
-	src/qml/command-list-model.hpp
-	src/qml/command-list-model.cpp
+	src/qml/root-search-sources.hpp
+	src/qml/root-search-sources.cpp
+	src/qml/section-source.hpp
+	src/qml/section-list-model.hpp
+	src/qml/section-list-model.cpp
+	src/qml/fuzzy-section.hpp
+	src/qml/list-view-host.hpp
 	src/qml/action-panel-model.hpp
 	src/qml/action-panel-model.cpp
+	src/qml/completion-model.hpp
+	src/qml/completion-model.cpp
 	src/qml/action-panel-controller.hpp
 	src/qml/action-panel-controller.cpp
 	src/qml/alert-model.hpp
@@ -483,12 +464,18 @@ set(SRCS
 	src/qml/bridge-view.hpp
 	src/qml/calc-history-model.hpp
 	src/qml/calc-history-model.cpp
+	src/qml/calc-history-view-host.hpp
+	src/qml/calc-history-view-host.cpp
 	src/qml/theme-list-model.hpp
 	src/qml/theme-list-model.cpp
-	src/qml/command-grid-model.hpp
-	src/qml/command-grid-model.cpp
+	src/qml/theme-view-host.hpp
+	src/qml/theme-view-host.cpp
+	src/qml/grid-source.hpp
+	src/qml/section-grid-model.hpp
+	src/qml/section-grid-model.cpp
 	src/qml/emoji-grid-model.hpp
 	src/qml/emoji-grid-model.cpp
+	src/qml/emoji-grid-view-host.hpp
 	src/qml/view-utils.cpp
 	src/qml/extension-view-host.hpp
 	src/qml/extension-view-host.cpp
@@ -517,19 +504,21 @@ set(SRCS
 	src/qml/extension-grid-model.hpp
 	src/qml/extension-grid-model.cpp
 	src/qml/source-blend-rect.hpp
+	src/qml/source-blend-rect.cpp
 	src/qml/image-url.hpp
 	src/qml/image-url.cpp
 	src/qml/image-source.hpp
 	src/qml/image-source.cpp
-	src/qml/animated-image.hpp
-	src/qml/animated-image.cpp
-	src/qml/async-image-provider.hpp
-	src/qml/async-image-provider.cpp
+	src/qml/vici-image-item.hpp
+	src/qml/vici-image-item.cpp
 	src/qml/config-bridge.hpp
 	src/qml/theme-bridge.hpp
+	src/qml/keyboard-bridge.hpp
+	src/qml/global-shortcut-bridge.hpp
+	src/qml/shortcut-conflict.hpp
+	src/qml/shortcut-conflict.cpp
 	src/qml/create-extension-view-host.hpp
 	src/qml/create-extension-view-host.cpp
-	src/qml/fuzzy-list-model.hpp
 	src/qml/installed-extensions-model.hpp
 	src/qml/installed-extensions-model.cpp
 	src/qml/installed-extensions-view-host.hpp
@@ -593,11 +582,58 @@ set(SRCS
 
 )
 
-if (UNIX)
+if (UNIX AND NOT APPLE)
 	list(APPEND SRCS
 		src/services/calculator-service/soulver-core/soulver-core.cpp
 	)
 endif()
+
+if (APPLE)
+	list(APPEND SRCS
+		src/ui/image/mac-file-icon-loader.hpp
+		src/ui/image/mac-file-icon-loader.mm
+		src/services/app-service/macos/mac-app.hpp
+		src/services/app-service/macos/mac-app.mm
+		src/services/app-service/macos/mac-app-database.hpp
+		src/services/app-service/macos/mac-app-database.mm
+		src/services/app-runtime/macos/mac-app-runtime.hpp
+		src/services/app-runtime/macos/mac-app-runtime.mm
+		src/root-search/macos-settings/macos-settings-root-provider.hpp
+		src/root-search/macos-settings/macos-settings-root-provider.mm
+		src/services/global-shortcuts/macos-global-shortcut-backend.hpp
+		src/services/global-shortcuts/macos-global-shortcut-backend.cpp
+		src/services/files-service/macos/spotlight-file-indexer.hpp
+		src/services/files-service/macos/spotlight-file-indexer.mm
+	)
+	set_source_files_properties(
+		src/ui/image/mac-file-icon-loader.mm
+		src/services/app-service/macos/mac-app.mm
+		src/services/app-service/macos/mac-app-database.mm
+		src/services/app-runtime/macos/mac-app-runtime.mm
+		src/root-search/macos-settings/macos-settings-root-provider.mm
+		src/services/files-service/macos/spotlight-file-indexer.mm
+		PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+else()
+	list(APPEND SRCS
+		src/services/app-runtime/linux/linux-app-runtime.hpp
+		src/services/app-runtime/linux/linux-app-runtime.cpp
+	)
+endif()
+
+list(APPEND SRCS
+	src/services/app-runtime/abstract-app-runtime.hpp
+	src/services/app-runtime/app-runtime.hpp
+	src/services/app-runtime/app-runtime.cpp
+)
+
+list(APPEND SRCS
+	src/services/global-shortcuts/abstract-global-shortcut-backend.hpp
+	src/services/global-shortcuts/dummy-global-shortcut-backend.hpp
+	src/services/global-shortcuts/global-shortcut-backend-factory.hpp
+	src/services/global-shortcuts/global-shortcut-backend-factory.cpp
+	src/services/global-shortcuts/global-shortcut-service.hpp
+	src/services/global-shortcuts/global-shortcut-service.cpp
+)
 
 if (LIBQALCULATE_BACKEND)
 	list(APPEND LIBS qalculate)
@@ -614,12 +650,20 @@ endif()
 
 if (UNIX AND NOT APPLE)
 	list(APPEND SRCS
-		#src/lib/xkbcommon-utils.cpp
-
 		src/services/paste/linux-paste-service.cpp
-		src/services/paste/paste-service.cpp
 
-		src/lib/icon-theme-db/icon-theme-db.cpp
+		src/services/input-server/linux-input-server.hpp
+		src/services/input-server/linux-input-server.cpp
+		src/services/snippet/linux-snippet-server.hpp
+		src/services/snippet/linux-snippet-server.cpp
+
+		src/services/global-shortcuts/xkb-keysym.hpp
+		src/services/global-shortcuts/xkb-keysym.cpp
+
+		src/services/global-shortcuts/x11-global-shortcut-backend.hpp
+		src/services/global-shortcuts/x11-global-shortcut-backend.cpp
+
+		src/internal/icon-theme-db/icon-theme-db.cpp
 
 		src/services/window-manager/hyprland/hyprland.cpp
 		src/services/window-manager/hyprland/hypr-listener.hpp
@@ -644,7 +688,7 @@ if (UNIX AND NOT APPLE)
 	# Add XCB (X11 C Bindings) library for X11 window manager support
 	find_package(X11 REQUIRED)
 	if (X11_FOUND)
-		list(APPEND LIBS X11::xcb)
+		list(APPEND LIBS X11::xcb X11::xcb_keysyms)
 		message(STATUS "XCB library found for X11 window manager support")
 	endif()
 
@@ -654,29 +698,100 @@ if (UNIX AND NOT APPLE)
 	wayland_generate_protocol("ext-data-control-v1")
 	wayland_generate_protocol("kde-blur")
 	wayland_generate_protocol("ext-background-effect-v1")
+	wayland_generate_protocol("keyboard-shortcuts-inhibit-unstable-v1")
+	wayland_generate_protocol("ext-hotkey-v1")
 
-	list(APPEND LIBS xkbcommon vicinae::linuxutils)
+	list(APPEND LIBS xkbcommon)
 
 	# Common Wayland support files
 	list(APPEND SRCS
-		src/lib/wayland/globals.cpp
-		src/lib/wayland/display.cpp
-		src/lib/wayland/registry.cpp
-		src/lib/wayland/seat.cpp
+		src/internal/wayland/globals.cpp
+		src/internal/wayland/display.cpp
+		src/internal/wayland/registry.cpp
+		src/internal/wayland/seat.cpp
+		src/services/background-effect/ext-background-effect-v1-manager.cpp
+		src/services/background-effect/kde-background-effect-manager.cpp
+		src/services/shortcut-inhibit/wayland-shortcut-inhibit-manager.cpp
 		src/services/clipboard/data-control/data-control-clipboard-server.hpp
 		src/services/clipboard/data-control/data-control-clipboard-server.cpp
+
+		src/services/global-shortcuts/ext-hotkey-global-shortcut-backend.hpp
+		src/services/global-shortcuts/ext-hotkey-global-shortcut-backend.cpp
+
+		src/services/files-service/file-indexer/file-indexer.hpp
+		src/services/files-service/file-indexer/file-indexer.cpp
 	)
 
-	wayland_generate_protocol("wlr-data-control-unstable-v1")
 endif()
-	
+
+include("Figura")
+
+figura_compile(
+	SERVER
+	PROTO "${FIGURA_DIR}/tsapi.fig"
+	LANG glaze-qt
+	NAMESPACE tsapi
+	OUTPUT tsapi.hpp
+)
+
+figura_compile(
+	CLIENT
+	PROTO "${FIGURA_DIR}/manager.fig"
+	LANG glaze-qt
+	NAMESPACE manager
+	OUTPUT manager.hpp
+)
+
+figura_compile(
+	SERVER
+	PROTO "${FIGURA_DIR}/ipc.fig"
+	LANG glaze-qt
+	NAMESPACE ipc_gen
+	OUTPUT ipc-server.hpp
+)
+
+figura_compile(
+	CLIENT
+	PROTO "${FIGURA_DIR}/snippet.fig"
+	LANG glaze-qt
+	NAMESPACE snippet_gen
+	OUTPUT snippet-client.hpp
+)
+
+if (UNIX AND NOT APPLE)
+	figura_compile(
+		CLIENT
+		PROTO "${FIGURA_DIR}/file-indexer.fig"
+		LANG glaze-qt
+		NAMESPACE file_indexer_gen
+		OUTPUT file-indexer-client.hpp
+	)
+endif()
+
 
 qt_add_executable(${TARGET} ${SRCS})
+
+if(APPLE)
+	set(VICINAE_BUNDLE_EXECUTABLE "Vicinae")
+	set(VICINAE_BUNDLE_SHORT_VERSION "${VICINAE_GIT_TAG}")
+	string(REGEX REPLACE "^v" "" VICINAE_BUNDLE_SHORT_VERSION "${VICINAE_BUNDLE_SHORT_VERSION}")
+	if(NOT VICINAE_BUNDLE_SHORT_VERSION MATCHES "^[0-9]+(\\.[0-9]+)*$")
+		set(VICINAE_BUNDLE_SHORT_VERSION "0.0.0")
+	endif()
+	get_git_commit_count(VICINAE_BUNDLE_VERSION)
+	configure_file(
+		"${CMAKE_SOURCE_DIR}/extra/Info.plist.in"
+		"${CMAKE_BINARY_DIR}/Info.plist"
+		@ONLY
+	)
+endif()
 
 set(VICINAE_QML_FILES
 	src/qml/qml/LauncherWindow.qml
 	src/qml/qml/SearchBar.qml
 	src/qml/qml/GenericListView.qml
+	src/qml/qml/HoverResetOnModelChange.qml
+	src/qml/qml/HoverResetOnShow.qml
 	src/qml/qml/RootSearchList.qml
 	src/qml/qml/ListItemDelegate.qml
 	src/qml/qml/ListAccessory.qml
@@ -690,6 +805,7 @@ set(VICINAE_QML_FILES
 	src/qml/qml/ShortcutBadge.qml
 	src/qml/qml/TextBadge.qml
 	src/qml/qml/CommandListView.qml
+	src/qml/qml/CalcHistoryListView.qml
 	src/qml/qml/CalculatorResultDelegate.qml
 	src/qml/qml/ThemeListView.qml
 	src/qml/qml/ThemeItemDelegate.qml
@@ -697,8 +813,8 @@ set(VICINAE_QML_FILES
 	src/qml/qml/EmptyView.qml
 	src/qml/qml/EmojiGridView.qml
 	src/qml/qml/ViciButton.qml
-	src/qml/qml/ViciImage.qml
 	src/qml/qml/ViciScrollBar.qml
+	src/qml/qml/ViciDivider.qml
 	src/qml/qml/ViciToolTip.qml
 	src/qml/qml/ExtensionView.qml
 	src/qml/qml/MarkdownDetailView.qml
@@ -710,6 +826,7 @@ set(VICINAE_QML_FILES
 	src/qml/qml/SearchableDropdown.qml
 	src/qml/qml/ClipboardHistoryView.qml
 	src/qml/qml/ClipboardFilterAccessory.qml
+	src/qml/qml/EmojiCategoryFilterAccessory.qml
 	src/qml/qml/DetailPanel.qml
 	src/qml/qml/MetadataBar.qml
 	src/qml/qml/AlertDialog.qml
@@ -723,6 +840,9 @@ set(VICINAE_QML_FILES
 	src/qml/qml/AliasFormView.qml
 	src/qml/qml/ShortcutFormView.qml
 	src/qml/qml/FormCompletedInput.qml
+	src/qml/qml/FormCompletedTextArea.qml
+	src/qml/qml/PlaceholderCompleter.qml
+	src/qml/qml/CompletionPopup.qml
 	src/qml/qml/CreateExtensionFormView.qml
 	src/qml/qml/ArgCompleter.qml
 	src/qml/qml/DetailListView.qml
@@ -746,6 +866,7 @@ set(VICINAE_QML_FILES
 	src/qml/qml/BrowseFontsView.qml
 	src/qml/qml/ExtensionFormView.qml
 	src/qml/qml/FormFilePicker.qml
+	src/qml/qml/FormAppSelector.qml
 	src/qml/qml/FormDateInput.qml
 	src/qml/qml/FormLinkAccessory.qml
 	src/qml/qml/ExtensionDropdownAccessory.qml
@@ -767,6 +888,7 @@ set(VICINAE_QML_FILES
 	src/qml/qml/ExtensionSettingsPage.qml
 	src/qml/qml/AboutSettingsPage.qml
 	src/qml/qml/ShortcutRecorderField.qml
+	src/qml/qml/ShortcutField.qml
 	src/qml/qml/PreferenceFormView.qml
 	src/qml/qml/SettingsPreferenceForm.qml
 	src/qml/qml/MissingPreferenceView.qml
@@ -778,24 +900,61 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug")
 	list(APPEND VICINAE_QML_FILES src/qml/qml/ButtonShowcase.qml src/qml/qml/UIShowcase.qml)
 endif()
 
+if(WAYLAND_LAYER_SHELL)
+	list(APPEND VICINAE_QML_FILES src/qml/qml/LauncherWindowLayerShell.qml)
+endif()
+
+if(APPLE)
+	list(APPEND VICINAE_QML_FILES
+		src/qml/qml/LauncherWindowMacOS.qml
+		src/qml/qml/SettingsWindowMacOS.qml
+	)
+endif()
+
 # Strip directory prefix so resources are qrc:/Vicinae/Foo.qml
 foreach(qml_file IN LISTS VICINAE_QML_FILES)
 	get_filename_component(alias ${qml_file} NAME)
 	set_source_files_properties(${qml_file} PROPERTIES QT_RESOURCE_ALIAS ${alias})
 endforeach()
 
+set(VICINAE_QML_SOURCES
+	src/qml/source-blend-rect.hpp
+	src/qml/vici-image-item.hpp
+	src/qml/hover-activation.hpp
+	src/qml/hover-activation.cpp
+	src/qml/completion-model.hpp
+	src/qml/markdown/markdown-model.hpp
+	src/qml/markdown/text-selection-controller.hpp
+	src/qml/background-effect-attached.hpp
+	src/qml/background-effect-attached.cpp
+	src/qml/shortcut-inhibitor-attached.hpp
+	src/qml/shortcut-inhibitor-attached.cpp
+)
+
+if(APPLE)
+	list(APPEND VICINAE_QML_SOURCES
+		src/qml/macos-chrome-attached.hpp
+		src/qml/macos-chrome-attached.mm
+	)
+endif()
+
 qt_add_qml_module(${TARGET}
 	URI Vicinae
 	VERSION 1.0
 	RESOURCE_PREFIX /
 	QML_FILES ${VICINAE_QML_FILES}
-	SOURCES
-		src/qml/source-blend-rect.hpp
-		src/qml/animated-image.hpp
-		src/qml/markdown/markdown-model.hpp
-		src/qml/markdown/text-selection-controller.hpp
+	SOURCES ${VICINAE_QML_SOURCES}
 	DEPENDENCIES QtQuick
 	NO_PLUGIN
+)
+
+qt6_add_shaders(${TARGET} "sourceblend_shaders"
+	BATCHABLE
+	PREFIX "/shaders"
+	GLSL "100es,120,150,330,440"
+	FILES
+		src/qml/shaders/sourceblend.vert
+		src/qml/shaders/sourceblend.frag
 )
 
 if(Qt6_FOUND)
@@ -806,7 +965,19 @@ endif()
 
 target_include_directories(${TARGET} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/qml ${CMAKE_CURRENT_SOURCE_DIR}/src/qml/markdown)
 target_link_libraries(${TARGET} PRIVATE ${LIBS})
-target_compile_features(${TARGET} PUBLIC cxx_std_26)
+if(APPLE)
+	target_link_libraries(${TARGET} PRIVATE "-framework AppKit" "-framework UniformTypeIdentifiers" "-framework Carbon" "-framework CoreServices")
+endif()
+target_compile_features(${TARGET} PUBLIC cxx_std_23)
+
+# Workaround: libc++ pre-C++26 has unconstrained std::variant relational operators,
+# which trigger a hard error inside glaze's tuplet-based reflection over structs
+# whose fields contain variants. Compile this file in C++26 mode on Apple so
+# libc++'s SFINAE on variant::operator< makes the synthesis short-circuit.
+if(APPLE)
+	set_source_files_properties(src/extend/model-deser.cpp
+		PROPERTIES COMPILE_OPTIONS "-std=gnu++26")
+endif()
 
 if (USE_PRECOMPILED_HEADERS)
 	message(STATUS "Precompiled headers are enabled")
@@ -816,38 +987,18 @@ else()
 	message(STATUS "Precompiled headers are disabled")
 endif()
 
-make_directory(${CMAKE_CURRENT_BINARY_DIR}/proto)
-
-set(PROTO_IMPORT_DIRS ${PROTO_DIR} ${COMMON_PROTO_DIR})
-
-if (NOT USE_SYSTEM_PROTOBUF)
-	list(APPEND PROTO_IMPORT_DIRS ${protobuf_SOURCE_DIR}/src)
+if(NOT APPLE)
+	install(TARGETS ${TARGET}
+		RUNTIME DESTINATION ${VICINAE_LIBEXEC_DIR}
+	)
 endif()
 
-protobuf_generate(
-	TARGET ${TARGET}
-	PROTOS ${PROTO_FILES}
-	IMPORT_DIRS ${PROTO_IMPORT_DIRS}
-	PROTOC_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/proto
-)
-
-foreach(PROTO_FILE ${PROTO_FILES})
-	get_filename_component(PROTO_NAME ${PROTO_FILE} NAME_WE)
-	set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/proto/${PROTO_NAME}.pb.cc PROPERTIES SKIP_LINTING ON)
-endforeach()
-
-install(TARGETS ${TARGET}
-	RUNTIME DESTINATION ${VICINAE_LIBEXEC_DIR}
-)
-
-if (BUILD_TESTS)
+if (BUILD_TESTS AND UNIX AND NOT APPLE)
 	set(TEST_TARGET ${TARGET}-tests)
 	find_package(Catch2 3 REQUIRED)
 	add_executable(${TEST_TARGET}
-		tests/shortcut-tests.cpp
-		src/extend/action-shortcut-parser.cpp
-		src/lib/keyboard/keyboard.cpp
-		src/lib/keyboard/keybind-manager.cpp
+		src/internal/keyboard/keyboard.cpp
+		src/internal/keyboard/keybind-manager.cpp
 	)
 	target_link_libraries(${TEST_TARGET} PRIVATE Catch2::Catch2WithMain Qt6::Core Qt6::Gui)
 	target_compile_features(${TEST_TARGET} PUBLIC cxx_std_23)

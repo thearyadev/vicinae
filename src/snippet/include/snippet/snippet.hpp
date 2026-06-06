@@ -1,52 +1,73 @@
 #pragma once
-#include "types.hpp"
-#include "linuxutils/keyboard.hpp"
+#include <optional>
 #include <sys/epoll.h>
 #include <libudev.h>
 #include <unistd.h>
-#include <unordered_map>
 #include <xkbcommon/xkbcommon.h>
+#include "linuxutils/keyboard.hpp"
+#include "types.hpp"
+
+class Frame;
 
 namespace snippet {
 
-class Server {
+class SnippetService : public snippet_gen::AbstractSnippet {
 public:
-  Server();
-  ~Server();
+  SnippetService(snippet_gen::RpcTransport &transport);
 
-  void listen();
+  std::expected<void, std::string> setKeymap(snippet_gen::LayoutInfo info) override;
+  std::expected<snippet_gen::CreateSnippetResponse, std::string>
+  createSnippet(snippet_gen::CreateSnippetRequest req) override;
+  std::expected<snippet_gen::RemoveSnippetResponse, std::string>
+  removeSnippet(snippet_gen::RemoveSnippetRequest req) override;
+  std::expected<void, std::string> resetContext() override;
+  std::expected<void, std::string> injectExpand(snippet_gen::InjectExpandRequest req) override;
+  std::expected<void, std::string> injectUndo(snippet_gen::InjectUndoRequest req) override;
+  std::expected<void, std::string> injectPaste(snippet_gen::InjectPasteRequest req) override;
+  std::expected<void, std::string> setKeyDelay(int delayUs) override;
+  std::expected<snippet_gen::KeyboardCapabilities, std::string> getCapabilities() override;
 
-protected:
-  std::vector<std::string> enumerateKeyboards();
-  void setupIPC();
-  void setLayout(const LayoutInfo &info);
-
-  template <typename T> void notify(typename T::Request req) {
-    const auto json = m_client.notify<T>(std::move(req));
-    uint32_t size = json.size();
-    std::cout.write(reinterpret_cast<const char *>(&size), sizeof(size));
-    std::cout.write(json.data(), json.size());
-    std::cout.flush();
-  };
+  void listen(snippet_gen::Server &server);
+  void setIpcFrame(Frame *frame) { m_ipcFrame = frame; }
 
   struct Snippet {
     std::string trigger;
-    ipc::ExpansionMode mode;
+    snippet_gen::ExpansionMode mode;
   };
 
-  void emitExpansion(const Snippet &snipet);
-
 private:
-  linuxutils::UInputKeyboard m_kb;
+  enum class DeviceType { Keyboard, Pointer };
+
+  struct InputDevice {
+    int fd = -1;
+    std::string name;
+    epoll_event ev;
+    DeviceType type;
+  };
+
+  void setLayout(const snippet_gen::LayoutInfo &info);
+  std::vector<std::string> enumerateDevices(const char *property);
+  bool registerDevice(const char *device, DeviceType type);
+  void removeDevice(std::vector<InputDevice>::iterator it);
+  void emitExpansion(const Snippet &snippet);
+  bool hasActiveModifiers() const;
+  void flushPendingExpansion();
+  void drainInputEvents();
+  bool checkInputInterrupt();
+
   std::string m_text;
+  std::optional<std::string> m_undoTrigger;
+  std::optional<Snippet> m_pendingExpansion;
   udev *m_udev = nullptr;
   xkb_context *m_xkb = nullptr;
   xkb_keymap *m_keymap = nullptr;
   xkb_state *m_kbState = nullptr;
-  std::unordered_map<std::string, Snippet> m_snippetMap;
+  int m_epollFd = -1;
+  std::vector<Snippet> m_snippets;
+  linuxutils::UInputKeyboard m_keyboard;
 
-  ::ipc::RpcServer<snippet::ipc::ClientSchema> m_server; // vicinae -> snippet requests
-  ::ipc::RpcClient<snippet::ipc::ServerSchema> m_client; // snippet -> vicinae requests/notifications
+  Frame *m_ipcFrame = nullptr;
+  std::vector<InputDevice> m_devices;
 };
 
 }; // namespace snippet

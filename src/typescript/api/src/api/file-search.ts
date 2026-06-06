@@ -1,6 +1,5 @@
-import { bus } from "./bus";
-import { FileInfo as ProtoFileInfo } from "./proto/file-search";
-
+import { getClient } from "./client";
+import type * as api from "./proto/api";
 /**
  * Access Vicinae's built-in file search functionality.
  *
@@ -24,9 +23,8 @@ export namespace FileSearch {
 	/**
 	 * For now we provide no options, but in the future we will implement mime type and file type filtering.
 	 * */
-	export type SearchOptions = {};
 
-	export type FileInfo = ProtoFileInfo;
+	export type FileInfo = api.FileInfo;
 
 	/**
 	 * Search for files matching the provided query string.
@@ -36,22 +34,16 @@ export namespace FileSearch {
 	 * @returns Promise resolving to array of matching files
 	 *
 	 * @remarks
-	 * Uses prefix matching on filename tokens. For example:
-	 * - File: "invoice-new-motherboard.pdf"
-	 * - Matches: "inv", "new", "mother", "pdf"
-	 * - No match: "board", "oice" (not prefixes)
+	 * Uses fuzzy filename matching backed by Vicinae's file index. For example:
+	 * - File: "example folder"
+	 * - Matches: "fol exa", "exa fol", "ex fold"
 	 *
 	 * @example
 	 * ```typescript
 	 * const files = await fileSearch.search('invoice');
 	 * ```
 	 */
-	export async function search(
-		query: string,
-		_: FileSearch.SearchOptions = {},
-	): Promise<FileSearch.FileInfo[]> {
-		const res = await bus.request("fileSearch.search", { query });
-
-		return res.unwrap().files;
+	export async function search(query: string): Promise<FileSearch.FileInfo[]> {
+		return getClient().FileSearch.search(query);
 	}
 }

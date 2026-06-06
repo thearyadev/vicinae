@@ -8,14 +8,14 @@ Item {
     activeFocusOnTab: true
 
     property bool checked: false
-    signal toggled
+    signal toggled(bool checked)
 
     Rectangle {
         anchors.fill: parent
         radius: 10
         color: root.checked ? Theme.accent : Qt.rgba(Theme.foreground.r, Theme.foreground.g, Theme.foreground.b, 0.2)
         border.width: root.activeFocus ? 1 : 0
-        border.color: Theme.inputBorderFocus
+        border.color: Config.withAlpha(Theme.inputBorderFocus, Config.windowOpacity)
         Behavior on color {
             ColorAnimation {
                 duration: 120
@@ -40,18 +40,9 @@ Item {
     MouseArea {
         anchors.fill: parent
         cursorShape: Qt.PointingHandCursor
-        onClicked: {
-            root.checked = !root.checked;
-            root.toggled();
-        }
+        onClicked: root.toggled(!root.checked)
     }
 
-    Keys.onReturnPressed: {
-        root.checked = !root.checked;
-        root.toggled();
-    }
-    Keys.onSpacePressed: {
-        root.checked = !root.checked;
-        root.toggled();
-    }
+    Keys.onReturnPressed: root.toggled(!root.checked)
+    Keys.onSpacePressed: root.toggled(!root.checked)
 }

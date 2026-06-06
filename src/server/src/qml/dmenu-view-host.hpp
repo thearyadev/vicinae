@@ -1,13 +1,11 @@
 #pragma once
-#include "bridge-view.hpp"
-#include "vicinae-ipc/ipc.hpp"
+#include "dmenu-model.hpp"
+#include "generated/ipc-server.hpp"
+#include "list-view-host.hpp"
 #include <qmimedatabase.h>
 
-class DMenuModel;
-
-class DMenuViewHost : public ViewHostBase {
+class DMenuViewHost : public ListViewHost {
   Q_OBJECT
-  Q_PROPERTY(QObject *listModel READ listModel CONSTANT)
   Q_PROPERTY(bool hasDetail READ hasDetail NOTIFY detailChanged)
   Q_PROPERTY(QString detailName READ detailName NOTIFY detailChanged)
   Q_PROPERTY(QString detailPath READ detailPath NOTIFY detailChanged)
@@ -20,7 +18,7 @@ signals:
   void selected(const QString &text);
 
 public:
-  explicit DMenuViewHost(ipc::DMenu::Request data);
+  explicit DMenuViewHost(ipc_gen::DMenuRequest data) : m_data(std::move(data)) {}
 
   QUrl qmlComponentUrl() const override;
   QVariantMap qmlProperties() override;
@@ -30,7 +28,6 @@ public:
   void beforePop() override;
   bool showBackButton() const override { return false; }
 
-  QObject *listModel() const;
   bool hasDetail() const { return m_hasDetail; }
   QString detailName() const { return m_detailName; }
   QString detailPath() const { return m_detailPath; }
@@ -38,12 +35,15 @@ public:
   QString detailImageSource() const { return m_detailImageSource; }
   QString detailTextContent() const { return m_detailTextContent; }
 
+protected:
+  std::unique_ptr<ActionPanelState> emptyActionPanel() override;
+
 private:
   void loadDetail(std::string_view path);
   void clearDetail();
 
-  ipc::DMenu::Request m_data;
-  DMenuModel *m_model = nullptr;
+  ipc_gen::DMenuRequest m_data;
+  DMenuSection m_section;
   QMimeDatabase m_mimeDb;
   bool m_selected = false;
 

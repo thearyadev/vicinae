@@ -6,7 +6,7 @@ Item {
         anchors.fill: parent
         anchors.leftMargin: 16
         anchors.rightMargin: 16
-        spacing: 8
+        spacing: 4
 
         Item {
             Layout.fillWidth: true
@@ -14,7 +14,10 @@ Item {
 
             FooterNavStatus {
                 visible: !launcher.toastActive
+                clickable: launcher.atRoot
+                availableWidth: parent.width
                 anchors.verticalCenter: parent.verticalCenter
+                onClicked: launcher.openFooterMenu()
             }
 
             FooterToast {
@@ -26,14 +29,11 @@ Item {
 
         FooterButton {
             id: primaryButton
-            visible: {
-                if (!launcher.isRootSearch)
-                    return actionPanel.primaryActionTitle !== "";
-                return searchModel.primaryActionTitle !== "";
-            }
+            visible: actionPanel.primaryActionTitle !== ""
             Layout.alignment: Qt.AlignVCenter
-            label: !launcher.isRootSearch ? actionPanel.primaryActionTitle : searchModel.primaryActionTitle
-            shortcutTokens: !launcher.isRootSearch ? actionPanel.primaryActionShortcutTokens : searchModel.primaryActionShortcutTokens
+            label: actionPanel.primaryActionTitle
+            shortcutTokens: actionPanel.primaryActionShortcutTokens
+            highlighted: true
             onClicked: launcher.handleReturn()
         }
 
@@ -41,8 +41,16 @@ Item {
             visible: primaryButton.visible && actionsButton.visible
             Layout.alignment: Qt.AlignVCenter
             width: 1
-            height: 14
-            color: Theme.divider
+            height: 12
+            opacity: primaryButton.hovered || actionsButton.hovered ? 0 : 0.35
+            color: Config.withAlpha(Theme.textMuted, Config.windowOpacity)
+
+            Behavior on opacity {
+                NumberAnimation {
+                    duration: 200
+                    easing.type: Easing.OutCubic
+                }
+            }
         }
 
         FooterButton {

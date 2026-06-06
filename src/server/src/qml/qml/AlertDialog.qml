@@ -13,10 +13,10 @@ Popup {
 
     property bool _confirmed: false
 
-	onAboutToShow: {
-		_confirmed = false;
-		Qt.callLater(cancelBtn.forceActiveFocus);
-	}
+    onAboutToShow: {
+        _confirmed = false;
+        Qt.callLater(cancelBtn.forceActiveFocus);
+    }
     onClosed: {
         if (!_confirmed)
             launcher.alertModel.cancel();
@@ -66,8 +66,8 @@ Popup {
 
     background: Rectangle {
         radius: 6
-        color: Qt.rgba(Theme.secondaryBackground.r, Theme.secondaryBackground.g, Theme.secondaryBackground.b, 0.98)
-        border.color: Theme.divider
+        color: Qt.rgba(Theme.secondaryBackground.r, Theme.secondaryBackground.g, Theme.secondaryBackground.b, 0.95)
+        border.color: Config.withAlpha(Theme.divider, Config.windowOpacity)
         border.width: 1
     }
 

@@ -7,6 +7,7 @@ Item {
 
     required property var model
     property var boundActions: root.model
+    property var controller: actionPanel
 
     signal navigateBack
 
@@ -93,6 +94,14 @@ Item {
     readonly property int emptyPadding: 32
 
     implicitHeight: (_empty ? emptyLabel.implicitHeight + 2 * emptyPadding : listView.contentHeight + listView.topMargin + listView.bottomMargin) + filterBar.height + divider.height
+
+    HoverResetOnModelChange {
+        target: root.model
+    }
+
+    HoverResetOnShow {
+        target: root
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -208,8 +217,8 @@ Item {
                 anchors.rightMargin: 12
                 spacing: 8
 
-                Image {
-                    source: "image://vicinae/builtin:magnifying-glass?fg=" + Theme.foreground
+                ViciImage {
+                    source: Img.builtin("magnifying-glass").withFillColor(Theme.foreground)
                     sourceSize.width: 14
                     sourceSize.height: 14
                     Layout.preferredWidth: 14
@@ -238,7 +247,13 @@ Item {
                         visible: !filterInput.text
                     }
 
-                    onTextEdited: root.model.setFilter(text)
+                    Timer {
+                        id: filterDebounce
+                        interval: 16
+                        onTriggered: root.model.setFilter(filterInput.text)
+                    }
+
+                    onTextEdited: filterDebounce.restart()
 
                     Keys.onPressed: function (event) {
                         const nav = launcher.matchNavigationKey(event.key, event.modifiers);
@@ -249,13 +264,10 @@ Item {
                             root.moveDown();
                             event.accepted = true;
                         } else if (nav === 3) {
-                            if (actionPanel.depth > 1)
+                            if (root.controller.depth > 1)
                                 root.navigateBack();
                             event.accepted = true;
-                        } else if (event.key === Qt.Key_Backspace && filterInput.text === "" && actionPanel.depth > 1) {
-                            root.navigateBack();
-                            event.accepted = true;
-                        } else if ((event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) && actionPanel.tryShortcut(event.key, event.modifiers)) {
+                        } else if ((event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) && root.controller.tryShortcut(event.key, event.modifiers)) {
                             event.accepted = true;
                         }
                     }

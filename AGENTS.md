@@ -20,12 +20,15 @@ We use C++23 so we have access to most modern C++ features.
 Here are a few rules to keep in mind:
 
 - Lack of value: use `std::optional` instead of arbitrary value discriminants such as the empty string. If this is not possible or goes against a commonly used convention, respect the convention first, no shoehorning. If we are dealing with raw pointers, the nullable component is already part of it so no need to add a layer of indirection.
-- Avoid raw pointers: unless we are dealing with QT's ownership model or a C API. For QT classes that are not QObjects, you should probably use standard smart pointers as recommended in modern QT.
+- Avoid raw pointers: unless we are dealing with QT's ownership model or a C API. For QT classes that are not QObjects, you should probably use standard smart pointers as recommended in modern QT. 
+- QObjects must be deleted using `deleteLater` and never raw `delete`, as this can cause memory corruption with signal and slots. Calling `delete` on a `QObject` is a **STRONG** code smell.
 - Watch for implicit copies: avoid copies as much as possible, use non owning containers when you can (`std::span`, `std::string_view`, `QStringView`) and just `std::move` the data when applicable. When copy is the safest option, use copy: don't go out of your way to respect this rule.
 - QT vs STL classes: prefer STL containers over QT counterparts.
 - vectors: always reserve `std::vector`s and use `emplace_back` to push new elements.
 - STL ranges: we like to use `<ranges>` where it works well. If you need to use a `for` loop, prioritize ranged ones or use `std::views::enumerate` if you need to deal with indexes and data.
 - casts: as you may notice from the clang-tidy rules, using `static_cast` is generally discouraged for classes that are related by inheritance, as it is very easy to make mistakes. Unless the logic is in a hot path (e.g a QT event filter), it's preferrable to use `dynamic_cast` as a safety net when there is no safer option. Note however that `dynamic_cast` is STILL a code smell and should generally be avoided in favor of better polymorphism.
+- Platform guards: use Qt's `Q_OS_*` macros (`Q_OS_MACOS`, `Q_OS_LINUX`, `Q_OS_WIN`) rather than `Q_OS_DARWIN` or compiler-defined ones like `__APPLE__`. `Q_OS_MACOS` specifically targets desktop macOS (excluding iOS/tvOS) and keeps guards consistent across the codebase.
+- As Vicinae becomes cross-platform, it is really important that we implement functionality the way it is intended to on the target platform. We should avoid using weird hacks and always use native APIs when possible.
 
 ## Coding style
 
@@ -34,6 +37,7 @@ Here are a few rules to keep in mind:
 - Include order: system headers before local headers.
 - Header guards: use `#pragma once`.
 - String types: use `std::string` internally, `QString` only at the Qt boundary.
+- Constants: use `UPPER_SNAKE_CASE` for `constexpr` and `static const` values.
 - Do not overuse comments, only add them when they provide actual value
 
 ## Linting and formatting
@@ -55,6 +59,7 @@ Some configuration and theming options may need to be accessed directly in QML. 
 ## General guidelines
 
 - Search should always be fuzzy, unless it has a good reason not to. We have fuzzy utilities already, and we like to use our fuzzy trait system by specializing the `FuzzySearchable` template
+- We are building Vicinae with cross-platform compatibility in mind (Linux, MacOS, Windows) so abstractions need to be designed accordingly. While Linux is our main development target, we should avoid making abstractions that are too platform specific.
 
 ## React/TypeScript extensions
 

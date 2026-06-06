@@ -10,6 +10,7 @@ using Hyprctl = Hyprland::Controller;
 HyprlandWindowManager::HyprlandWindowManager() {
   connect(&m_ev, &Hyprland::EventListener::openwindow, this, [this]() { emit windowsChanged(); });
   connect(&m_ev, &Hyprland::EventListener::closewindow, this, [this]() { emit windowsChanged(); });
+  connect(&m_ev, &Hyprland::EventListener::activewindowchanged, this, [this]() { emit focusChanged(); });
 }
 
 QString HyprlandWindowManager::id() const { return "hyprland"; }
@@ -27,20 +28,6 @@ AbstractWindowManager::WindowList HyprlandWindowManager::listWindowsSync() const
   return windows;
 }
 
-void HyprlandWindowManager::applyLayerRule(std::string_view rule) {
-  Hyprctl::oneshot(std::format("keyword layerrule {}, {}", rule, Omnicast::LAYER_SCOPE));
-}
-
-void HyprlandWindowManager::applyLayerRules() {
-  if (m_dimAround) { applyLayerRule("dimaround"); }
-}
-
-bool HyprlandWindowManager::setDimAround(bool value) {
-  m_dimAround = value;
-  applyLayerRules();
-  return false;
-}
-
 AbstractWindowManager::WindowPtr HyprlandWindowManager::getFocusedWindowSync() const {
   auto response = Hyprctl::oneshot("-j/activewindow");
   auto json = QJsonDocument::fromJson(response);
@@ -51,11 +38,17 @@ AbstractWindowManager::WindowPtr HyprlandWindowManager::getFocusedWindowSync() c
 }
 
 void HyprlandWindowManager::focusWindowSync(const AbstractWindow &window) const {
-  Hyprctl::oneshot(std::format("dispatch focuswindow address:{}", window.id().toStdString()));
+  auto addr = window.id().toStdString();
+  Hyprctl::oneshot(std::format("[[BATCH]]dispatch focuswindow address:{0}"
+                               ";eval hl.dispatch(hl.dsp.focus({{window=\"address:{0}\"}}))",
+                               addr));
 }
 
 bool HyprlandWindowManager::closeWindow(const AbstractWindow &window) const {
-  Hyprctl::oneshot(std::format("dispatch closewindow address:{}", window.id().toStdString()));
+  auto addr = window.id().toStdString();
+  Hyprctl::oneshot(std::format("[[BATCH]]dispatch closewindow address:{0}"
+                               ";eval hl.dispatch(hl.dsp.window.close({{window=\"address:{0}\"}}))",
+                               addr));
   emit windowsChanged();
 
   return true;

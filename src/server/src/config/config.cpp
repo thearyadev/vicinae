@@ -25,6 +25,7 @@ SNAKE_CASIFY(config::SystemThemeConfig);
 SNAKE_CASIFY(config::ThemeConfig);
 SNAKE_CASIFY(config::TelemetryConfig);
 SNAKE_CASIFY(config::WindowCSD);
+SNAKE_CASIFY(config::GlobalShortcuts);
 
 struct ConfigTransformer : glz::snake_case {
   static constexpr std::string rename_key(const std::string_view key) {
@@ -266,7 +267,7 @@ Manager::PartialConfigResult Manager::load(const std::filesystem::path &path, co
   };
 
   if (opts.resolveImports) {
-    for (const auto &imp : cfg.imports.value_or({})) {
+    for (const auto &imp : cfg.imports.value_or(std::vector<std::string>{})) {
       auto result = importFile(cfg, resolvePath(imp, path), false);
       if (!result) return result;
       cfg = std::move(result).value();
@@ -285,8 +286,11 @@ Manager::PartialConfigResult Manager::load(const std::filesystem::path &path, co
 void Manager::prunePartial(Partial<ConfigValue> &user) {
   auto prunePreferences = [](glz::generic::object_t &obj) {
     for (auto it = obj.begin(); it != obj.end();) {
-      auto cur = it++;
-      if (cur->second.is_null()) { obj.erase(cur); }
+      if (it->second.is_null()) {
+        it = obj.erase(it);
+      } else {
+        ++it;
+      }
     }
   };
 
@@ -314,7 +318,9 @@ void Manager::prunePartial(Partial<ConfigValue> &user) {
           }
 
           if (vi.alias && vi.alias->empty()) { vi.alias.reset(); }
-          if (!vi.enabled.has_value() && vi.preferences.value_or({}).empty() && !vi.alias) {
+          if (vi.shortcut && vi.shortcut->empty()) { vi.shortcut.reset(); }
+          if (!vi.enabled.has_value() && vi.preferences.value_or(glz::generic::object_t{}).empty() &&
+              !vi.alias && !vi.shortcut) {
             entrypoints.erase(currentIt);
           }
         }
@@ -322,7 +328,9 @@ void Manager::prunePartial(Partial<ConfigValue> &user) {
         if (entrypoints.empty()) { v.entrypoints.reset(); }
       }
 
-      if (!v.enabled && v.preferences.value_or({}).empty() && !v.entrypoints) { pvd.erase(currentIt); }
+      if (!v.enabled && v.preferences.value_or(glz::generic::object_t{}).empty() && !v.entrypoints) {
+        pvd.erase(currentIt);
+      }
     }
 
     if (pvd.empty()) { user.providers.reset(); }

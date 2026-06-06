@@ -1,10 +1,10 @@
 #pragma once
+#include "clipboard-history-model.hpp"
 #include "bridge-view.hpp"
+#include "section-list-model.hpp"
 #include "services/clipboard/clipboard-db.hpp"
-#include <QTemporaryFile>
-#include <memory>
+#include "view-utils.hpp"
 
-class ClipboardHistoryModel;
 class ClipboardHistoryController;
 class ClipboardService;
 
@@ -43,7 +43,7 @@ public:
   Q_INVOKABLE void toggleMonitoring();
   Q_INVOKABLE void setKindFilter(int kind);
 
-  QObject *listModel() const;
+  QObject *listModel() const { return const_cast<SectionListModel *>(&m_model); }
   QString itemCountText() const { return m_itemCountText; }
   QString clipboardStatusText() const { return m_clipboardStatusText; }
   QString clipboardStatusIcon() const { return m_clipboardStatusIcon; }
@@ -75,9 +75,11 @@ private:
   void saveDropdownFilter(const QString &value);
   std::optional<QString> getSavedDropdownFilter();
 
-  ClipboardHistoryModel *m_model = nullptr;
+  SectionListModel m_model{this};
+  ClipboardHistorySection m_section;
   ClipboardHistoryController *m_controller = nullptr;
   ClipboardService *m_clipman = nullptr;
+  QMimeDatabase m_mimeDb;
 
   QString m_itemCountText = QStringLiteral("Loading...");
   QString m_clipboardStatusText;
@@ -96,6 +98,4 @@ private:
   QString m_detailEncryptionIcon;
   QString m_detailErrorTitle;
   QString m_detailErrorDescription;
-
-  std::unique_ptr<QTemporaryFile> m_tmpFile;
 };

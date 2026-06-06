@@ -1,5 +1,5 @@
 #pragma once
-#include "fuzzy-list-model.hpp"
+#include "fuzzy-section.hpp"
 #include "services/app-service/abstract-app-db.hpp"
 #include "services/window-manager/abstract-window-manager.hpp"
 
@@ -14,23 +14,20 @@ template <> struct fuzzy::FuzzySearchable<WindowEntry> {
     auto wmClass = e.window->wmClass().toStdString();
     if (e.app) {
       auto appName = e.app->displayName().toStdString();
-      return fuzzy::scoreWeighted({{title, 1.0}, {wmClass, 0.7}, {appName, 0.9}}, query);
+      return fuzzy::scoreWeighted({{title, 1.0}, {appName, 0.5}, {wmClass, 0.3}}, query);
     }
-    return fuzzy::scoreWeighted({{title, 1.0}, {wmClass, 0.7}}, query);
+    return fuzzy::scoreWeighted({{title, 1.0}, {wmClass, 0.3}}, query);
   }
 };
 
-class SwitchWindowsModel : public FuzzyListModel<WindowEntry> {
-  Q_OBJECT
-
+class SwitchWindowsSection : public FuzzySection<WindowEntry> {
 public:
-  using FuzzyListModel::FuzzyListModel;
+  QString sectionName() const override { return QStringLiteral("Open Windows"); }
 
 protected:
   QString displayTitle(const WindowEntry &e) const override;
   QString displaySubtitle(const WindowEntry &e) const override;
   QString displayIconSource(const WindowEntry &e) const override;
-  QVariantList displayAccessory(const WindowEntry &e) const override;
+  QVariantList displayAccessories(const WindowEntry &e) const override;
   std::unique_ptr<ActionPanelState> buildActionPanel(const WindowEntry &e) const override;
-  QString sectionLabel() const override;
 };

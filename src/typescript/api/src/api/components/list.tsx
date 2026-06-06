@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { useRef } from "react";
+import { useEventCounted } from "../hooks/use-event-counted";
 import {
 	type Image,
 	type ImageLike,
@@ -171,11 +172,11 @@ export declare namespace List {
 			 * @see {@link ImageLike}
 			 */
 			icon?:
-			| ImageLike
-			| {
-				value: ImageLike | undefined | null;
-				tooltip: string;
-			};
+				| ImageLike
+				| {
+						value: ImageLike | undefined | null;
+						tooltip: string;
+				  };
 
 			/**
 			 * Unique identifier for this item.
@@ -304,6 +305,8 @@ const ListRoot: React.FC<List.Props> = ({
 	searchBarAccessory,
 	children,
 	actions,
+	searchText,
+	onSearchTextChange,
 	...props
 }) => {
 	if (
@@ -313,8 +316,17 @@ const ListRoot: React.FC<List.Props> = ({
 		props.filtering = props.enableFiltering;
 	}
 
+	const [countedSearchText, wrappedOnSearchTextChange] = useEventCounted(
+		searchText,
+		onSearchTextChange,
+	);
+
 	return (
-		<list {...props}>
+		<list
+			{...props}
+			searchText={countedSearchText}
+			onSearchTextChange={wrappedOnSearchTextChange}
+		>
 			{searchBarAccessory}
 			{children}
 			{actions}

@@ -4,8 +4,9 @@
 #include <qlogging.h>
 #include "root-item-manager.hpp"
 #include "common.hpp"
+#include "glaze-qt.hpp"
 #include "root-search/extensions/extension-root-provider.hpp"
-#include "lib/fzf.hpp"
+#include "fuzzy/fzf.hpp"
 #include "config/config.hpp"
 #include "services/local-storage/local-storage-service.hpp"
 #include "utils.hpp"
@@ -120,6 +121,7 @@ void RootItemManager::updateIndex() {
       auto visitInfo = m_visitTracker.getVisit(id);
 
       sitem.meta->visitCount = visitInfo.visitCount;
+      sitem.meta->lastVisitedAt = visitInfo.lastVisitedAt;
       m_items.emplace_back(sitem);
     }
   }
@@ -132,17 +134,33 @@ void RootItemManager::updateIndex() {
 float RootItemManager::SearchableRootItem::fuzzyScore(std::string_view pattern) const {
   using WS = fzf::WeightedString;
   std::string alias = meta->alias.value_or("");
-  std::initializer_list<WS> ss = {{title, 1.0f}, {subtitle, 0.6f}, {alias, 1.0f}};
+  std::initializer_list<WS> ss = {{title, 1.0f}, {subtitle, 0.5f}, {alias, 1.0f}};
   auto kws = keywords | std::views::transform([](auto &&kw) { return WS{kw, 0.3f}; });
-  auto strs = std::views::concat(ss, kws);
   float const score =
-      pattern.empty() ? 1 : fzf::defaultMatcher.fuzzy_match_v2_score_query(strs, pattern, false);
-  double const frequencyScore = std::log(1 + meta->visitCount * 0.1);
-  float const frequencyWeight = 0.2;
+      pattern.empty() ? 1 : fzf::threadLocalMatcher().fuzzy_match_v2_score_query(ss, kws, pattern, false);
 
-  // TODO: add recency support
+  if (score == 0) return 0;
 
-  return score * (1 + frequencyScore * frequencyWeight);
+  constexpr double FRECENCY_BOOST_CAP = 25.0;
+  constexpr double FRECENCY_FREQ_SCALE = 5.0;
+  constexpr double FRECENCY_RECENCY_PEAK = 10.0;
+  constexpr double FRECENCY_RECENCY_HALF_LIFE_DAYS = 30.0;
+  constexpr double SECONDS_PER_DAY = 86400.0;
+
+  double const frequencyTerm = FRECENCY_FREQ_SCALE * std::log(1 + meta->visitCount * 0.1);
+
+  double recencyTerm = 0.0;
+  if (meta->lastVisitedAt) {
+    double const daysSince =
+        (QDateTime::currentSecsSinceEpoch() - static_cast<std::int64_t>(*meta->lastVisitedAt)) /
+        SECONDS_PER_DAY;
+    recencyTerm =
+        FRECENCY_RECENCY_PEAK * std::exp(-std::max(0.0, daysSince) / FRECENCY_RECENCY_HALF_LIFE_DAYS);
+  }
+
+  double const boost = std::min(FRECENCY_BOOST_CAP, frequencyTerm + recencyTerm);
+
+  return score + boost;
 }
 
 std::vector<RootItemManager::ScoredItem> RootItemManager::search(const QString &query,
@@ -177,7 +195,10 @@ void RootItemManager::search(const QString &query, std::vector<ScoredItem> &resu
       bool const aa = !a.meta->alias.value_or("").empty() && a.meta->alias->starts_with(pattern);
       bool const ab = !b.meta->alias.value_or("").empty() && b.meta->alias->starts_with(pattern);
       // always prioritize matching aliases over score
-      if (aa - ab) { return aa > ab; }
+      if (aa != ab) { return aa > ab; }
+      if (aa && ab && a.meta->alias->size() != b.meta->alias->size()) {
+        return a.meta->alias->size() < b.meta->alias->size();
+      }
     }
 
     return a.score > b.score;
@@ -215,45 +236,11 @@ bool RootItemManager::setProviderPreferenceValues(const QString &id, const QJson
 }
 
 QJsonObject RootItemManager::transformPreferenceValues(const glz::generic::object_t &preferences) {
-  QJsonObject obj;
-
-  std::function<QJsonValue(const glz::generic &)> transformValue = [&](const glz::generic &v) -> QJsonValue {
-    if (v.is_boolean()) return v.get_boolean();
-    if (v.is_string()) return v.get_string().c_str();
-    if (v.is_number()) return v.get_number();
-    if (v.is_null()) return QJsonValue::Null;
-    if (v.is_array())
-      return v.get_array() | std::views::transform(transformValue) | std::ranges::to<QJsonArray>();
-    if (v.is_object()) return transformValue(v.get_object());
-    return QJsonValue::Undefined;
-  };
-
-  for (const auto &[key, v] : preferences) {
-    obj[key.c_str()] = transformValue(v);
-  }
-
-  return obj;
+  return glazeToQJsonObject(preferences);
 }
 
 glz::generic::object_t RootItemManager::transformPreferenceValues(const QJsonObject &preferences) {
-  glz::generic::object_t obj;
-
-  std::function<glz::generic(const QJsonValue &)> transformValue = [&](const QJsonValue &v) -> glz::generic {
-    if (v.isBool()) return v.toBool();
-    if (v.isString()) return v.toString().toStdString();
-    if (v.isDouble()) return v.toDouble();
-    if (v.isNull()) return glz::generic::null_t{};
-    if (v.isArray())
-      return v.toArray() | std::views::transform(transformValue) | std::ranges::to<glz::generic::array_t>();
-    if (v.isObject()) return transformPreferenceValues(v.toObject());
-    return {};
-  };
-
-  for (const auto &key : preferences.keys()) {
-    obj[key.toStdString()] = transformValue(preferences.value(key));
-  }
-
-  return obj;
+  return qJsonObjectToGlazeGeneric(preferences);
 }
 
 bool RootItemManager::setItemPreferenceValues(const EntrypointId &id, const QJsonObject &preferences) {
@@ -342,9 +329,21 @@ bool RootItemManager::setAlias(const EntrypointId &id, std::string_view alias) {
   return true;
 }
 
+bool RootItemManager::setShortcut(const EntrypointId &id, std::string_view shortcut) {
+  if (shortcut.empty()) {
+    m_metadata[id].shortcut.reset();
+  } else {
+    m_metadata[id].shortcut = shortcut;
+  }
+  m_cfg.mergeEntrypointWithUser(id, {.shortcut = std::string{shortcut}});
+
+  return true;
+}
+
 QJsonObject RootItemManager::getProviderPreferenceValues(const QString &id) const {
   auto provider = findProviderById(id);
-  auto json = transformPreferenceValues(m_cfg.value().providerPreferences(id.toStdString()).value_or({}));
+  auto json = transformPreferenceValues(
+      m_cfg.value().providerPreferences(id.toStdString()).value_or(glz::generic::object_t{}));
 
   for (const Preference &pref : provider->preferences()) {
     if (!json.contains(pref.name())) {
@@ -376,7 +375,8 @@ QJsonObject RootItemManager::getItemPreferenceValues(const EntrypointId &id) con
 
   if (!item) return {};
 
-  QJsonObject json = transformPreferenceValues(m_cfg.value().preferences(id).value_or({}));
+  QJsonObject json =
+      transformPreferenceValues(m_cfg.value().preferences(id).value_or(glz::generic::object_t{}));
 
   for (const auto &pref : item->preferences()) {
     if (!json.contains(pref.name())) {
@@ -398,7 +398,10 @@ std::vector<Preference> RootItemManager::getMergedItemPreferences(const Entrypoi
 
   if (!provider || !item) return {};
 
-  return std::views::concat(provider->preferences(), item->preferences()) | std::ranges::to<std::vector>();
+  auto result = provider->preferences() | std::ranges::to<std::vector>();
+  auto itemPrefs = item->preferences();
+  result.insert(result.end(), itemPrefs.begin(), itemPrefs.end());
+  return result;
 }
 
 QJsonObject RootItemManager::getPreferenceValues(const EntrypointId &id) const {
@@ -428,7 +431,9 @@ bool RootItemManager::setItemAsFavorite(const EntrypointId &itemId, bool value) 
   if (value) {
     favorites.insert(favorites.begin(), id);
   } else {
-    favorites.erase(std::ranges::find(favorites, id));
+    auto it = std::ranges::find(favorites, id);
+    if (it == favorites.end()) { return false; }
+    favorites.erase(it);
   }
 
   m_cfg.mergeWithUser({.favorites = favorites});
@@ -438,54 +443,20 @@ bool RootItemManager::setItemAsFavorite(const EntrypointId &itemId, bool value) 
   return true;
 }
 
-double RootItemManager::computeRecencyScore(const RootItemMetadata &meta) const {
-  if (!meta.lastVisitedAt) return 0.1;
-
-  auto now = std::chrono::high_resolution_clock::now();
-  auto hoursSince = std::chrono::duration_cast<std::chrono::hours>(now - *meta.lastVisitedAt).count() / 24.0;
-
-  if (hoursSince < 1) return 2.0;
-  if (hoursSince < 6) return 1.5;
-
-  return std::exp(-hoursSince / 30.0);
-}
-
-double RootItemManager::computeScore(const RootItemMetadata &meta, int weight) const {
-  double const frequencyScore = std::log(meta.visitCount + 1);
-  double const recencyScore = computeRecencyScore(meta);
-
-  return (frequencyScore + recencyScore) * weight;
-}
-
 std::vector<std::shared_ptr<RootItem>> RootItemManager::queryFavorites(std::optional<int> limit) {
   return getFromSerializedEntrypointIds(m_cfg.value().favorites);
 }
 
-std::vector<RootItemManager::SearchableRootItem> RootItemManager::querySuggestions(int limit) {
-  auto isSuggestable = [](auto &&item) {
-    return item.meta->enabled && item.meta->visitCount > 0 && !item.meta->favorite;
-  };
-  auto suggestions = m_items | std::views::filter(isSuggestable) | std::ranges::to<std::vector>();
-
-  std::ranges::sort(suggestions, [this](const auto &a, const auto &b) {
-    auto ascore = computeScore(*a.meta, a.item->baseScoreWeight());
-    auto bscore = computeScore(*b.meta, b.item->baseScoreWeight());
-    return ascore > bscore;
-  });
-
-  if (std::cmp_greater(suggestions.size(), limit)) { suggestions.resize(limit); }
-
-  return suggestions;
-}
-
 bool RootItemManager::resetRanking(const EntrypointId &id) {
   m_metadata[id].visitCount = 0;
+  m_metadata[id].lastVisitedAt.reset();
   m_visitTracker.forget(id);
   return true;
 }
 
 bool RootItemManager::registerVisit(const EntrypointId &id) {
   ++m_metadata[id].visitCount;
+  m_metadata[id].lastVisitedAt = QDateTime::currentSecsSinceEpoch();
   m_visitTracker.registerVisit(id);
   return true;
 }
@@ -633,6 +604,7 @@ void RootItemManager::mergeConfigWithMetadata(const config::ConfigValue &cfg) {
       item.item->preferenceValuesChanged(getItemPreferenceValues(entrypointId));
       if (auto enabled = itemConfig->enabled) { meta.enabled = enabled.value(); }
       if (auto alias = itemConfig->alias) { meta.alias = alias.value(); }
+      if (auto shortcut = itemConfig->shortcut) { meta.shortcut = shortcut.value(); }
     }
 
     if (providerConfig) {

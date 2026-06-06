@@ -1,6 +1,6 @@
-import { bus } from "./bus";
-import { Image, serializeProtoImage } from "./image";
-import { ConfirmAlertActionStyle, ConfirmAlertRequest } from "./proto/ui";
+import { getClient } from "./client";
+import type { Image } from "./image";
+import type * as api from "./proto/api";
 
 /**
  * @category Alert
@@ -28,10 +28,10 @@ export namespace Alert {
 	};
 }
 
-const styleMap: Record<Alert.ActionStyle, ConfirmAlertActionStyle> = {
-	[Alert.ActionStyle.Default]: ConfirmAlertActionStyle.Default,
-	[Alert.ActionStyle.Destructive]: ConfirmAlertActionStyle.Destructive,
-	[Alert.ActionStyle.Cancel]: ConfirmAlertActionStyle.Cancel,
+const styleMap: Record<Alert.ActionStyle, api.ConfirmAlertActionStyle> = {
+	[Alert.ActionStyle.Default]: "Default",
+	[Alert.ActionStyle.Destructive]: "Destructive",
+	[Alert.ActionStyle.Cancel]: "Cancel",
 };
 
 /**
@@ -56,33 +56,31 @@ export const confirmAlert = async (
 	options: Alert.Options,
 ): Promise<boolean> => {
 	return new Promise<boolean>((resolve) => {
-		const req = ConfirmAlertRequest.create({
-			title: options.title,
-			description: options.message ?? "Are you sure?",
-			icon: options.icon && serializeProtoImage(options.icon),
-			rememberUserChoice: false,
-			primaryAction: {
-				title: options.primaryAction?.title ?? "Confirm",
-				style:
-					styleMap[options.primaryAction?.style ?? Alert.ActionStyle.Default],
-			},
-			dismissAction: {
-				title: options.dismissAction?.title ?? "Cancel",
-				style:
-					styleMap[options.dismissAction?.style ?? Alert.ActionStyle.Cancel],
-			},
-		});
+		getClient()
+			.UI.confirmAlert({
+				title: options.title,
+				description: options.message ?? "Are you sure?",
+				//icon: options.icon && serializeProtoImage(options.icon),
+				rememberUserChoice: false,
+				primaryAction: {
+					title: options.primaryAction?.title ?? "Confirm",
+					style:
+						styleMap[options.primaryAction?.style ?? Alert.ActionStyle.Default],
+				},
+				dismissAction: {
+					title: options.dismissAction?.title ?? "Cancel",
+					style:
+						styleMap[options.dismissAction?.style ?? Alert.ActionStyle.Cancel],
+				},
+			})
+			.then((confirmed) => {
+				if (confirmed) {
+					options.primaryAction?.onAction?.();
+				} else {
+					options.dismissAction?.onAction?.();
+				}
 
-		bus.request("ui.confirmAlert", req).then((res) => {
-			if (!res.ok) return false;
-
-			if (res.value.confirmed) {
-				options.primaryAction?.onAction?.();
-			} else {
-				options.dismissAction?.onAction?.();
-			}
-
-			resolve(res.value.confirmed);
-		});
+				resolve(confirmed);
+			});
 	});
 };

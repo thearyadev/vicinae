@@ -1,41 +1,54 @@
 #pragma once
-#include "command-list-model.hpp"
+#include <string>
+#include <vector>
+#include "fuzzy-section.hpp"
+#include "fuzzy/fuzzy-searchable.hpp"
 #include "services/extension-store/vicinae-store.hpp"
 
 class ExtensionRegistry;
 
-class VicinaeStoreModel : public CommandListModel {
-  Q_OBJECT
+struct VicinaeStoreEntry {
+  VicinaeStore::Extension extension;
+  bool installed = false;
+};
 
-signals:
+template <> struct fuzzy::FuzzySearchable<VicinaeStoreEntry> {
+  static int score(const VicinaeStoreEntry &entry, std::string_view query) {
+    auto title = entry.extension.title.toStdString();
+    auto author = entry.extension.author.name.toStdString();
+    auto desc = entry.extension.description.toStdString();
+    return fuzzy::scoreWeighted({{title, 1.0}, {author, 0.5}, {desc, 0.3}}, query);
+  }
+};
 
+class VicinaeStoreSection : public FuzzySection<VicinaeStoreEntry> {
 public:
   enum ExtraRole {
-    DownloadCount = CommandListModel::Accessory + 1,
+    DownloadCount = 100,
     AuthorAvatar,
     IsInstalled,
     CompatTierRole,
   };
 
-  explicit VicinaeStoreModel(QObject *parent = nullptr);
-
   void setEntries(const std::vector<VicinaeStore::Extension> &extensions, ExtensionRegistry *registry,
                   const QString &sectionName);
-  void setFilter(const QString &) override {}
 
-  QHash<int, QByteArray> roleNames() const override;
-  QVariant data(const QModelIndex &index, int role) const override;
+  QString sectionName() const override { return m_sectionName; }
+
+  QVariant customData(int i, int role) const override;
+  QHash<int, QByteArray> customRoleNames() const override {
+    return {{DownloadCount, "downloadCount"},
+            {AuthorAvatar, "authorAvatar"},
+            {IsInstalled, "isInstalled"},
+            {CompatTierRole, "compatTier"}};
+  }
 
 protected:
-  QString itemTitle(int s, int i) const override;
-  QString itemSubtitle(int s, int i) const override;
-  QString itemIconSource(int s, int i) const override;
-  std::unique_ptr<ActionPanelState> createActionPanel(int s, int i) const override;
+  QString displayTitle(const VicinaeStoreEntry &entry) const override;
+  QString displaySubtitle(const VicinaeStoreEntry &entry) const override;
+  QString displayIconSource(const VicinaeStoreEntry &entry) const override;
+  std::unique_ptr<ActionPanelState> buildActionPanel(const VicinaeStoreEntry &entry) const override;
 
 private:
-  struct Entry {
-    VicinaeStore::Extension extension;
-    bool installed = false;
-  };
-  std::vector<Entry> m_entries;
+  QString m_sectionName;
 };

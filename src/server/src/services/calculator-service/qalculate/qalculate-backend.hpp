@@ -11,11 +11,13 @@ class QalculateBackend : public AbstractCalculatorBackend {
   bool supportsCurrencyConversion() const override;
   QFuture<RefreshExchangeRatesResult> refreshExchangeRates() override;
   bool start() override;
-  ComputeResult compute(const QString &question) const override;
-  QFuture<ComputeResult> asyncCompute(const QString &question) const override;
+  ComputeResult compute(const QString &question) override;
+  QFuture<ComputeResult> asyncCompute(const QString &question) override;
+  void abort() override;
   bool supportsRefreshExchangeRates() const override;
 
   bool isActivatable() const override;
+  bool isExpression(const std::string &query) const override;
 
 public:
   QalculateBackend();
@@ -24,7 +26,8 @@ private:
   static std::optional<std::string> getUnitDisplayName(const MathStructure &s, std::string_view prefix = "");
 
   void initializeCalculator();
-  QString preprocessQuestion(const QString &question) const;
+  static QString preprocessQuestion(const QString &question);
+  static QString stripTrailingOperators(QString expr);
 
   Calculator m_calc;
   bool m_initialized = false;

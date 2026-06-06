@@ -19,6 +19,7 @@ namespace config {
 struct ProviderItemData {
   std::optional<std::string> alias;
   std::optional<bool> enabled;
+  std::optional<std::string> shortcut;
   std::optional<glz::generic::object_t> preferences;
 };
 
@@ -90,12 +91,14 @@ struct WindowCSD {
   bool enabled = true;
   int rounding = 10;
   int borderWidth = 3;
+  int shadowSize = 12;
 };
 
 template <> struct Partial<WindowCSD> {
   std::optional<bool> enabled;
   std::optional<int> rounding;
   std::optional<int> borderWidth;
+  std::optional<int> shadowSize;
 };
 
 struct WindowCompactMode {
@@ -111,7 +114,6 @@ struct WindowConfig {
   WindowCSD clientSideDecorations;
   Size size;
   std::string screen;
-  bool dimAround = true;
   BlurConfig blur;
   WindowCompactMode compactMode;
   LayerShellConfig layerShell;
@@ -122,7 +124,6 @@ template <> struct Partial<WindowConfig> {
   std::optional<float> opacity;
   std::optional<Partial<WindowCSD>> clientSideDecorations;
   std::optional<Partial<Size>> size;
-  std::optional<bool> dimAround;
   std::optional<Partial<BlurConfig>> blur;
   std::optional<Partial<WindowCompactMode>> compactMode;
   std::optional<Partial<LayerShellConfig>> layerShell;
@@ -187,6 +188,26 @@ using ProviderMap = std::map<std::string, ProviderData>;
 
 static constexpr const char *SCHEMA = "https://vicinae.com/schemas/config.json";
 
+struct InputServer {
+  bool enabled = true;
+};
+
+template <> struct Partial<InputServer> {
+  std::optional<bool> enabled;
+};
+
+struct GlobalShortcuts {
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+  std::optional<std::string> toggle = "alt+space";
+#else
+  std::optional<std::string> toggle = "super+control+space";
+#endif
+};
+
+template <> struct Partial<GlobalShortcuts> {
+  std::optional<std::string> toggle;
+};
+
 struct ConfigValue {
   std::string schema = SCHEMA;
   std::vector<std::string> imports;
@@ -200,6 +221,9 @@ struct ConfigValue {
   std::string faviconService = "twenty";
   std::string keybinding = "default";
   int pixmapCacheMb = 50;
+
+  InputServer inputServer;
+  GlobalShortcuts globalShortcuts;
 
   FontConfig font;
   ThemeConfig theme;
@@ -250,6 +274,8 @@ template <> struct Partial<ConfigValue> {
   std::optional<std::string> keybinding;
   std::optional<int> pixmapCacheMb;
   std::optional<bool> searchFilesInRoot;
+  std::optional<Partial<InputServer>> inputServer;
+  std::optional<Partial<GlobalShortcuts>> globalShortcuts;
 
   std::optional<Partial<FontConfig>> font;
   std::optional<Partial<ThemeConfig>> theme;

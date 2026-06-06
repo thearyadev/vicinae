@@ -1,5 +1,4 @@
 #include "pid-file/pid-file.hpp"
-#include "proto/wlr-clipboard.pb.h"
 #include "services/clipboard/clipboard-server.hpp"
 #include <QtCore>
 #include <QGuiApplication>
@@ -8,27 +7,16 @@
 #include <qlogging.h>
 #include <qprocess.h>
 #include <qdebug.h>
-#include <qresource.h>
 #include <qstringview.h>
+#include <glaze/glaze.hpp>
 #include "data-control-clipboard-server.hpp"
 #include "common/common.hpp"
 #include "wayland/globals.hpp"
+#include "common/clipboard-protocol.hpp"
 
 static constexpr const char *HELPER_PROGRAM = "vicinae-data-control-server";
 
 bool DataControlClipboardServer::isAlive() const { return m_process.isOpen(); }
-
-void DataControlClipboardServer::handleMessage(const proto::ext::wlrclip::Selection &sel) {
-  ClipboardSelection cs;
-
-  cs.offers.reserve(sel.offers().size());
-
-  for (const auto &offer : sel.offers()) {
-    cs.offers.push_back({offer.mime_type().c_str(), QByteArray::fromStdString(offer.data())});
-  }
-
-  emit selectionAdded(cs);
-}
 
 void DataControlClipboardServer::handleExit(int code, QProcess::ExitStatus status) {
   if (status == QProcess::ExitStatus::CrashExit) {
@@ -41,13 +29,12 @@ QString DataControlClipboardServer::id() const { return "data-control"; }
 int DataControlClipboardServer::activationPriority() const { return 1; }
 
 bool DataControlClipboardServer::isActivatable() const {
-  return Wayland::Globals::dataControlDeviceManager() || Wayland::Globals::wlrDataControlManager();
+  return Wayland::Globals::dataControlManager() != nullptr;
 }
 
-bool DataControlClipboardServer::stop() {
-  m_process.terminate();
-  return m_process.waitForFinished();
-}
+// Process must stay alive even when monitoring is off: it handles clipboard writes for snippets.
+// Incoming selections are filtered by ClipboardService::saveSelection when monitoring is disabled.
+bool DataControlClipboardServer::stop() { return true; }
 
 bool DataControlClipboardServer::start() {
   PidFile pidFile(HELPER_PROGRAM);
@@ -80,6 +67,7 @@ void DataControlClipboardServer::handleReadError() {
 
 void DataControlClipboardServer::handleRead() {
   using SizeType = uint32_t;
+  constexpr size_t TAG_SIZE = 1;
 
   while (m_process.bytesAvailable() > 0) {
     QByteArray data = m_process.readAllStandardOutput();
@@ -88,22 +76,67 @@ void DataControlClipboardServer::handleRead() {
 
     while (m_message.size() >= sizeof(SizeType)) {
       uint32_t const length = ntohl(*reinterpret_cast<SizeType *>(m_message.data()));
-      size_t const size = m_message.size() - sizeof(SizeType);
+      size_t const available = m_message.size() - sizeof(SizeType);
 
-      // we need to read more before we can process this
-      if (size < length) break;
+      if (available < length || length < TAG_SIZE) break;
 
-      proto::ext::wlrclip::Selection selection;
+      auto tag = static_cast<clipboard_proto::Command>(m_message[sizeof(SizeType)]);
+      std::string_view payload{m_message.data() + sizeof(SizeType) + TAG_SIZE, length - TAG_SIZE};
 
-      if (!selection.ParseFromString({m_message.data() + sizeof(SizeType), length})) {
-        qWarning() << "Failed to parse selection";
+      if (tag == clipboard_proto::Command::SelectionNotification) {
+        clipboard_proto::Selection selection;
+
+        if (auto err = glz::read_beve(selection, payload)) {
+          qWarning() << "Failed to parse clipboard selection";
+        } else {
+          ClipboardSelection cs;
+          cs.offers.reserve(selection.offers.size());
+
+          for (const auto &offer : selection.offers) {
+            cs.offers.push_back({
+                QString::fromStdString(offer.mime_type),
+                QByteArray(reinterpret_cast<const char *>(offer.data.data()), offer.data.size()),
+            });
+          }
+
+          emit selectionAdded(cs);
+        }
       } else {
-        handleMessage(selection);
+        qWarning() << "Unknown command tag from data-control-server:" << static_cast<int>(tag);
       }
 
       m_message.erase(m_message.begin(), m_message.begin() + sizeof(SizeType) + length);
     }
   }
+}
+
+bool DataControlClipboardServer::setClipboardContent(QMimeData *data) {
+  if (!QGuiApplication::focusWindow() && m_process.state() == QProcess::Running) {
+    clipboard_proto::Selection selection;
+    for (const auto &format : data->formats()) {
+      QByteArray raw = data->data(format);
+      selection.offers.push_back(
+          {.mime_type = format.toStdString(), .data = std::vector<uint8_t>(raw.begin(), raw.end())});
+    }
+
+    std::string buf;
+    if (auto err = glz::write_beve(selection, buf)) {
+      qWarning() << "Failed to serialize clipboard write request";
+      delete data;
+      return false;
+    }
+
+    uint8_t tag = static_cast<uint8_t>(clipboard_proto::Command::SetClipboard);
+    uint32_t netLen = htonl(static_cast<uint32_t>(buf.size() + 1));
+    m_process.write(reinterpret_cast<const char *>(&netLen), sizeof(netLen));
+    m_process.write(reinterpret_cast<const char *>(&tag), 1);
+    m_process.write(buf.data(), buf.size());
+
+    delete data;
+    return true;
+  }
+
+  return AbstractClipboardServer::setClipboardContent(data);
 }
 
 DataControlClipboardServer::DataControlClipboardServer() {

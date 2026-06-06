@@ -1,12 +1,12 @@
 #include "dmenu-view-host.hpp"
-#include "dmenu-model.hpp"
+#include "builtin_icon.hpp"
+#include "clipboard-actions.hpp"
+#include "keyboard/keybind.hpp"
 #include "utils/utils.hpp"
 #include "view-utils.hpp"
 #include <ranges>
 
 namespace fs = std::filesystem;
-
-DMenuViewHost::DMenuViewHost(ipc::DMenu::Request data) : m_data(std::move(data)) {}
 
 QUrl DMenuViewHost::qmlComponentUrl() const {
   if (m_data.noQuickLook) { return QUrl(QStringLiteral("qrc:/Vicinae/CommandListView.qml")); }
@@ -15,66 +15,64 @@ QUrl DMenuViewHost::qmlComponentUrl() const {
 
 QVariantMap DMenuViewHost::qmlProperties() {
   if (m_data.noQuickLook) {
-    return {{QStringLiteral("cmdModel"), QVariant::fromValue(static_cast<QObject *>(m_model))}};
+    return {{QStringLiteral("cmdModel"), QVariant::fromValue(static_cast<QObject *>(model()))}};
   }
   return {{QStringLiteral("host"), QVariant::fromValue(this)}};
 }
 
 void DMenuViewHost::initialize() {
   BaseView::initialize();
+  initModel();
 
-  m_model = new DMenuModel(this);
-  m_model->setScope(ViewScope(context(), this));
-  m_model->initialize();
-
-  if (m_data.noQuickLook) m_model->setNoQuickLook(true);
-  if (m_data.noSection) m_model->setNoSection(true);
-  if (m_data.sectionTitle) m_model->setSectionTemplate(*m_data.sectionTitle);
+  if (m_data.noQuickLook) m_section.setNoQuickLook(true);
+  if (m_data.noSection) m_section.setNoSection(true);
+  if (m_data.sectionTitle) m_section.setSectionTemplate(*m_data.sectionTitle);
   if (m_data.noFooter) setStatusBarVisiblity(false);
+  if (m_data.navigationTitle) setNavigationTitle(QString::fromStdString(*m_data.navigationTitle));
 
   setSearchPlaceholderText(m_data.placeholder.value_or("Search entries...").c_str());
 
   auto entries = std::views::split(m_data.rawContent, std::string_view("\n")) |
                  std::views::transform([](auto &&s) { return std::string_view(s); }) |
                  std::views::filter([](auto &&s) { return !s.empty(); }) | std::ranges::to<std::vector>();
-  m_model->setRawEntries(std::move(entries));
+  m_section.setRawEntries(std::move(entries));
 
-  connect(m_model, &DMenuModel::entryChosen, this, [this](const QString &text) {
+  auto onChosen = [this](const QString &text) {
     m_selected = true;
     emit selected(text);
-  });
+  };
+  m_section.setOnEntryChosen(onChosen);
 
   if (!m_data.noQuickLook) {
-    connect(m_model, &DMenuModel::fileHighlighted, this, &DMenuViewHost::loadDetail);
+    m_section.setOnFileHighlighted([this](std::string_view path) { loadDetail(path); });
   }
+
+  model()->addSource(&m_section);
 }
 
 void DMenuViewHost::loadInitialData() {
   if (m_data.query) {
     setSearchText(m_data.query.value_or("").c_str());
   } else {
-    m_model->setFilter({});
+    model()->setFilter({});
   }
 }
 
 void DMenuViewHost::textChanged(const QString &text) {
   clearDetail();
-  m_model->setFilter(text);
+  model()->setFilter(text);
 }
 
 void DMenuViewHost::beforePop() {
   if (!m_selected) { emit selected(""); }
 }
 
-QObject *DMenuViewHost::listModel() const { return m_model; }
-
 void DMenuViewHost::loadDetail(std::string_view path) {
-  auto qpath = QString::fromUtf8(path.data(), path.size());
   auto fspath = fs::path(path);
 
   m_hasDetail = true;
   m_detailName = QString::fromStdString(getLastPathComponent(fspath));
-  m_detailPath = qpath;
+  m_detailPath = QString::fromUtf8(path.data(), path.size());
 
   auto preview = qml::resolveFilePreview(fspath, m_mimeDb);
   m_detailMimeType = preview.mimeType;
@@ -93,4 +91,31 @@ void DMenuViewHost::clearDetail() {
   m_detailImageSource.clear();
   m_detailTextContent.clear();
   emit detailChanged();
+}
+
+std::unique_ptr<ActionPanelState> DMenuViewHost::emptyActionPanel() {
+  auto panel = std::make_unique<ListActionPanelState>();
+  auto *section = panel->createSection();
+
+  auto onChosen = [this](const QString &text, ApplicationContext *ctx) {
+    m_selected = true;
+    emit selected(text);
+    ctx->navigation->closeWindow();
+  };
+
+  auto *select = new StaticAction("Pass search text", BuiltinIcon::SaveDocument,
+                                  [this, onChosen](ApplicationContext *ctx) { onChosen(searchText(), ctx); });
+  select->setPrimary(true);
+  section->addAction(select);
+
+  auto *selectAndCopy = new StaticAction("Pass and copy search text", BuiltinIcon::CopyClipboard,
+                                         [this, onChosen](ApplicationContext *ctx) {
+                                           auto text = searchText();
+                                           ctx->services->clipman()->copyText(text);
+                                           onChosen(text, ctx);
+                                         });
+  selectAndCopy->setShortcut(Keybind::CopyAction);
+  section->addAction(selectAndCopy);
+
+  return panel;
 }

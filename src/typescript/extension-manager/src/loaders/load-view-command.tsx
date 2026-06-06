@@ -1,8 +1,9 @@
 import { createRenderer, type ViewData } from "../reconciler";
-import type { LaunchEventData } from "../proto/extension";
 import { type ComponentType, Suspense } from "react";
 import * as React from "react";
-import { NavigationProvider, bus } from "@vicinae/api";
+import { NavigationProvider } from "../navigation-provider";
+import type * as extensionServer from "../proto/extension-manager";
+import { globalState } from "../globals";
 
 class ErrorBoundary extends React.Component<
 	{ children: React.ReactNode },
@@ -21,8 +22,7 @@ class ErrorBoundary extends React.Component<
 		const { error } = this.state;
 
 		if (error) {
-			bus.emitCrash(error);
-			return null;
+			throw error;
 		}
 
 		return <>{this.props.children}</>;
@@ -35,23 +35,24 @@ const App: React.FC<{ component: ComponentType; launchProps: any }> = ({
 }) => {
 	return (
 		<ErrorBoundary>
-			<Suspense fallback={<></>}>
+			<Suspense fallback={null}>
 				<NavigationProvider root={<Component {...launchProps} />} />
 			</Suspense>
 		</ErrorBoundary>
 	);
 };
 
-export default async function(data: LaunchEventData) {
+export default async function (data: extensionServer.LaunchEventData) {
 	const module = await import(data.entrypoint);
 	const Component = module.default.default;
 	const sendRender = (views: ViewData[]) => {
-		bus.request("ui.render", { json: JSON.stringify({ views }) });
+		globalState.client.UI.render(JSON.stringify({ views }));
 	};
 	const renderer = createRenderer({
 		onInitialRender: sendRender,
 		onUpdate: sendRender,
 	});
+	globalState.renderer = renderer;
 
 	renderer.render(
 		<App

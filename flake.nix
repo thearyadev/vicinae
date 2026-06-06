@@ -38,9 +38,12 @@
 
           [[ "$OLD_EXT_MAN_DEPS_HASH" == "$NEW_EXT_MAN_DEPS_HASH" ]] || { echo -e "\e[31mHash mismatch for extension-manager npm deps, please replace the value in vicinae.nix with '$NEW_EXT_MAN_DEPS_HASH'.\e[0m" >&2; exit 1;}
         '';
+      });
+      lib = forEachPkgs (pkgs: {
         mkVicinaeExtension = pkgs.callPackage ./nix/mkVicinaeExtension.nix { };
         mkRayCastExtension = pkgs.callPackage ./nix/mkRayCastExtension.nix { };
-      }); devShells = forEachPkgs (
+      });
+      devShells = forEachPkgs (
         pkgs:
         let
           qtEnv = pkgs.qt6.env "qt-custom-${pkgs.qt6.qtbase.version}" [
@@ -78,5 +81,14 @@
         mkRayCastExtension = prev.callPackage ./nix/mkRayCastExtension.nix { };
       };
       homeManagerModules.default = import ./nix/module.nix self;
+
+      nixosModules.default = { pkgs, ... }: {
+        security.wrappers.vicinae-input-server = {
+          source = "${self.packages.${pkgs.stdenv.hostPlatform.system}.default}/libexec/vicinae/vicinae-input-server";
+          capabilities = "cap_dac_override+ep";
+          owner = "root";
+          group = "root";
+        };
+      };
     };
 }

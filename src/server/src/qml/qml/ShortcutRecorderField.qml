@@ -14,11 +14,14 @@ Popup {
     height: 80
     focus: true
     closePolicy: Popup.CloseOnPressOutside
+    popupType: Popup.Window
     padding: 10
 
     property var _currentShortcutTokens: []
     property string _statusText: "Recording..."
     property color _statusColor: Theme.foreground
+
+    property bool _justClosed: false
 
     Timer {
         id: closeTimer
@@ -26,7 +29,16 @@ Popup {
         onTriggered: recorder.close()
     }
 
-    function show(targetItem) {
+    Timer {
+        id: reopenGuard
+        interval: 300
+        onTriggered: recorder._justClosed = false
+    }
+
+    function show(targetItem, below) {
+        if (_justClosed)
+            return false;
+
         _currentShortcutTokens = [];
         _statusText = "Recording...";
         _statusColor = Theme.foreground;
@@ -34,23 +46,38 @@ Popup {
 
         var pos = targetItem.mapToItem(recorder.parent, 0, 0);
         recorder.x = pos.x + targetItem.width / 2 - recorder.width / 2;
-        recorder.y = pos.y - recorder.height - 10;
+        recorder.y = below ? pos.y + targetItem.height + 10 : pos.y - recorder.height - 10;
         recorder.open();
+        return true;
     }
 
-    onOpened: keyReceiver.forceActiveFocus()
+    onOpened: {
+        GlobalShortcuts.setCapturing(true);
+        keyReceiver.forceActiveFocus();
+    }
+    onAboutToHide: {
+        _justClosed = true;
+        reopenGuard.restart();
+    }
+    onClosed: GlobalShortcuts.setCapturing(false)
     onActiveFocusChanged: if (!activeFocus && opened)
         close()
 
+    Component.onDestruction: GlobalShortcuts.setCapturing(false)
+
     background: Rectangle {
         radius: 8
-        color: Qt.rgba(Theme.secondaryBackground.r, Theme.secondaryBackground.g, Theme.secondaryBackground.b, Theme.surfaceOpacity)
-        border.color: Theme.divider
+        color: Qt.rgba(Theme.secondaryBackground.r, Theme.secondaryBackground.g, Theme.secondaryBackground.b, 0.95)
+        border.color: Config.withAlpha(Theme.divider, Config.windowOpacity)
         border.width: 1
+        BackgroundEffect.enabled: Config.blurEnabled
+        BackgroundEffect.radius: 8
     }
 
     contentItem: FocusScope {
         focus: true
+
+        ShortcutInhibitor.enabled: recorder.opened
 
         Keys.onPressed: event => {
             event.accepted = true;

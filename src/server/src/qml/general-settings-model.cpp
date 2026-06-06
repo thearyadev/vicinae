@@ -1,4 +1,5 @@
 #include "general-settings-model.hpp"
+#include "config/config.hpp"
 #include "image-url.hpp"
 #include "view-utils.hpp"
 #include "service-registry.hpp"
@@ -6,7 +7,9 @@
 #include "theme/theme-file.hpp"
 #include "favicon/favicon-service.hpp"
 #include "font-service.hpp"
-#include "lib/icon-theme-db/icon-theme-db.hpp"
+#ifdef Q_OS_LINUX
+#include "internal/icon-theme-db/icon-theme-db.hpp"
+#endif
 #include "services/keybinding/keybinding-service.hpp"
 #include <QGuiApplication>
 #include <QIcon>
@@ -60,6 +63,18 @@ void GeneralSettingsModel::setClientSideDecorations(bool v) {
   cfgManager().mergeWithUser(
       {.launcherWindow = config::Partial<config::WindowConfig>{
            .clientSideDecorations = config::Partial<config::WindowCSD>{.enabled = v}}});
+}
+
+bool GeneralSettingsModel::compactMode() const { return cfg().launcherWindow.compactMode.enabled; }
+void GeneralSettingsModel::setCompactMode(bool v) {
+  cfgManager().mergeWithUser({.launcherWindow = config::Partial<config::WindowConfig>{
+                                  .compactMode = config::Partial<config::WindowCompactMode>{.enabled = v}}});
+}
+
+bool GeneralSettingsModel::inputServerEnabled() const { return cfg().inputServer.enabled; }
+
+void GeneralSettingsModel::setInputServerEnabled(bool v) {
+  cfgManager().mergeWithUser({.inputServer = config::Partial<config::InputServer>{.enabled = v}});
 }
 
 QString GeneralSettingsModel::windowOpacity() const { return QString::number(cfg().launcherWindow.opacity); }
@@ -133,10 +148,12 @@ QVariant GeneralSettingsModel::currentFont() const {
 
 QVariantList GeneralSettingsModel::iconThemeItems() const {
   QVariantList items;
+#ifdef Q_OS_LINUX
   IconThemeDatabase const db;
   for (const auto &theme : db.themes()) {
     items.append(makeDropdownItem(theme.name, theme.name));
   }
+#endif
   return wrapSection(QStringLiteral("Icon Themes"), items);
 }
 
@@ -195,4 +212,13 @@ void GeneralSettingsModel::selectFaviconService(const QString &id) {
 
 void GeneralSettingsModel::selectKeybindingScheme(const QString &id) {
   cfgManager().mergeWithUser({.keybinding = id.toStdString()});
+}
+
+QString GeneralSettingsModel::toggleShortcut() const {
+  return QString::fromStdString(cfg().globalShortcuts.toggle.value_or(""));
+}
+
+void GeneralSettingsModel::setToggleShortcut(const QString &shortcut) {
+  cfgManager().mergeWithUser(
+      {.globalShortcuts = config::Partial<config::GlobalShortcuts>{.toggle = shortcut.toStdString()}});
 }

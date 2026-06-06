@@ -312,6 +312,7 @@ void ExtensionSettingsModel::rebuild(const QString &filter) {
       ie.indent = 1;
       ie.enabled = metadata.enabled;
       ie.alias = QString::fromStdString(metadata.alias.value_or(""));
+      ie.shortcut = QString::fromStdString(metadata.shortcut.value_or(""));
       ie.entrypointId = item->uniqueId();
       ie.providerId = provider->uniqueId();
       ie.description = item->settingsDescription();
@@ -334,11 +335,19 @@ void ExtensionSettingsModel::rebuild(const QString &filter) {
 
   int newRow = !filter.isEmpty() ? 0 : m_selectedRow;
   if (std::cmp_greater_equal(newRow, m_visibleIndices.size())) newRow = m_visibleIndices.empty() ? -1 : 0;
+
+  bool const sameProvider = newRow >= 0 && newRow == m_selectedRow &&
+                            std::cmp_less(newRow, m_visibleIndices.size()) &&
+                            m_allEntries[m_visibleIndices[newRow]].providerId == selectedProviderId();
+
   m_selectedRow = -1;
-  if (newRow == -1)
+  if (sameProvider) {
+    m_selectedRow = newRow;
+  } else if (newRow == -1) {
     emit selectedChanged();
-  else
+  } else {
     select(newRow);
+  }
 }
 
 void ExtensionSettingsModel::rebuildVisible() {
@@ -389,7 +398,7 @@ void ExtensionSettingsModel::loadCommandsForProvider(const QString &providerId) 
         auto *item = manager->findItemById(e.entrypointId);
         bool const hasPrefs = item && !item->preferences().empty();
         commands.push_back({e.name, e.type, e.iconSource, e.description, e.enabled, hasPrefs, e.alias,
-                            QString::fromStdString(e.entrypointId)});
+                            QString::fromStdString(e.entrypointId), e.shortcut});
       }
       break;
     }
@@ -436,6 +445,20 @@ void ExtensionSettingsModel::setAliasByEntrypointId(const QString &id, const QSt
     setAlias(row, alias);
     m_commandModel->setAlias(id, alias);
   }
+}
+
+void ExtensionSettingsModel::setShortcutByEntrypointId(const QString &id, const QString &shortcut) {
+  ServiceRegistry::instance()->rootItemManager()->setShortcut(EntrypointId::fromSerialized(id.toStdString()),
+                                                              shortcut.toStdString());
+
+  if (int const row = findVisibleEntryByEntrypointId(id); row >= 0) {
+    m_allEntries[m_visibleIndices[row]].shortcut = shortcut;
+  }
+  m_commandModel->setShortcut(id, shortcut);
+}
+
+void ExtensionSettingsModel::clearShortcutByEntrypointId(const QString &id) {
+  setShortcutByEntrypointId(id, "");
 }
 
 int ExtensionSettingsModel::findVisibleEntryByEntrypointId(const QString &id) const {

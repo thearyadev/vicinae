@@ -10,8 +10,7 @@ namespace ExtensionActionPanelBuilder {
 static AbstractAction *createActionFromModel(const ActionModel &model, const NotifyFn &notify,
                                              const SubmitFn &submit);
 static AbstractAction *createSubmenuAction(const ActionPannelSubmenuPtr &submenuModel, const NotifyFn &notify,
-                                           SubmenuCache *submenuCache, const SubmitFn &submit);
-static void updateSubmenuCache(SubmenuCache *cache, const ActionPannelModel &model);
+                                           const SubmitFn &submit);
 
 static AbstractAction *createActionFromModel(const ActionModel &model, const NotifyFn &notify,
                                              const SubmitFn &submit) {
@@ -37,19 +36,21 @@ static AbstractAction *createActionFromModel(const ActionModel &model, const Not
       actionIcon = ImageURL::builtin("link");
     }
 
-    auto action = new PushViewAction(model.title, view, actionIcon);
-    if (model.stableId) { action->setId(*model.stableId); }
+    auto qTitle = QString::fromStdString(model.title);
+    auto action = new PushViewAction(qTitle, view, actionIcon);
+    if (model.stableId) { action->setId(QString::fromStdString(*model.stableId)); }
     return action;
   }
 
-  auto action = new StaticAction(model.title, model.icon, [notify, model, submit]() {
-    notify(model.onAction, {});
+  auto qTitle = QString::fromStdString(model.title);
+  auto action = new StaticAction(qTitle, model.icon, [notify, model, submit]() {
+    notify(QString::fromStdString(model.onAction), {});
 
     if (auto handler = model.onSubmit) {
       if (submit) {
         auto res = submit();
         if (res.has_value()) {
-          notify(*handler, QJsonArray{res.value()});
+          notify(QString::fromStdString(*handler), QJsonArray{res.value()});
         } else {
           qCritical() << "Failed to submit action" << res.error();
         }
@@ -57,87 +58,47 @@ static AbstractAction *createActionFromModel(const ActionModel &model, const Not
     }
   });
 
-  if (model.stableId) { action->setId(*model.stableId); }
+  if (model.stableId) { action->setId(QString::fromStdString(*model.stableId)); }
   return action;
 }
 
 static AbstractAction *createSubmenuAction(const ActionPannelSubmenuPtr &submenuModel, const NotifyFn &notify,
-                                           SubmenuCache *submenuCache, const SubmitFn &submit) {
+                                           const SubmitFn &submit) {
   if (!submenuModel) return nullptr;
-
-  if (submenuModel->stableId) { (*submenuCache)[*submenuModel->stableId] = submenuModel; }
 
   std::optional<ImageURL> icon;
   if (submenuModel->icon) { icon = ImageURL(*submenuModel->icon); }
 
   std::function<void()> onOpen = nullptr;
-  if (!submenuModel->onOpen.isEmpty()) {
+  if (!submenuModel->onOpen.empty()) {
     onOpen = [notify, handler = submenuModel->onOpen]() {
-      if (!handler.isEmpty()) { notify(handler, {}); }
+      if (!handler.empty()) { notify(QString::fromStdString(handler), {}); }
     };
   }
 
-  QString const stableId = submenuModel->stableId.value_or(QString());
-
-  auto action = new SubmenuAction(submenuModel->title, icon, onOpen);
-  if (submenuModel->stableId) { action->setId(*submenuModel->stableId); }
+  auto qTitle = QString::fromStdString(submenuModel->title);
+  auto action = new SubmenuAction(qTitle, icon, onOpen);
+  if (submenuModel->stableId) { action->setId(QString::fromStdString(*submenuModel->stableId)); }
   if (submenuModel->shortcut) { action->addShortcut(submenuModel->shortcut.value()); }
+  if (!submenuModel->onSearchTextChange.empty()) {
+    action->setOnSearchTextChangeHandler(QString::fromStdString(submenuModel->onSearchTextChange));
+  }
 
-  auto stateFactory = [notify, submenuCache, submit, stableId]() -> std::unique_ptr<ActionPanelState> {
-    if (!stableId.isEmpty()) {
-      auto it = submenuCache->find(stableId);
-      if (it != submenuCache->end()) { return buildSubmenuState(it->second, notify, submenuCache, submit); }
-    }
-    qWarning() << "Submenu state model not found in map for stableId:" << stableId;
-    return nullptr;
+  auto stateFactory = [notify, submenuModel, submit]() -> std::unique_ptr<ActionPanelState> {
+    return buildSubmenuState(submenuModel, notify, submit);
   };
   action->setSubmenuStateFactory(stateFactory);
 
   return action;
 }
 
-static void updateSubmenuCache(SubmenuCache *cache, const ActionPannelModel &model) {
-  std::function<void(const ActionPannelSubmenuPtr &)> updateSubmenuModel =
-      [&](const ActionPannelSubmenuPtr &submenu) {
-        if (submenu && submenu->stableId) {
-          (*cache)[*submenu->stableId] = submenu;
-          for (const auto &child : submenu->children) {
-            if (auto nestedSubmenuPtr = std::get_if<ActionPannelSubmenuPtr>(&child)) {
-              updateSubmenuModel(*nestedSubmenuPtr);
-            } else if (auto sectionPtr = std::get_if<ActionPannelSectionPtr>(&child)) {
-              if (*sectionPtr) {
-                for (const auto &sectionItem : (*sectionPtr)->items) {
-                  if (auto submenuInSection = std::get_if<ActionPannelSubmenuPtr>(&sectionItem)) {
-                    updateSubmenuModel(*submenuInSection);
-                  }
-                }
-              }
-            }
-          }
-        }
-      };
-
-  for (const auto &item : model.children) {
-    if (auto submenuPtr = std::get_if<ActionPannelSubmenuPtr>(&item)) {
-      updateSubmenuModel(*submenuPtr);
-    } else if (auto sectionPtr = std::get_if<ActionPannelSectionPtr>(&item)) {
-      for (const auto &sectionItem : (*sectionPtr)->items) {
-        if (auto submenuPtr = std::get_if<ActionPannelSubmenuPtr>(&sectionItem)) {
-          updateSubmenuModel(*submenuPtr);
-        }
-      }
-    }
-  }
-}
-
 std::unique_ptr<ActionPanelState> buildSubmenuState(const ActionPannelSubmenuPtr &submenuModel,
-                                                    const NotifyFn &notify, SubmenuCache *submenuCache,
-                                                    const SubmitFn &submit) {
+                                                    const NotifyFn &notify, const SubmitFn &submit) {
   if (!submenuModel) return nullptr;
 
   auto state = std::make_unique<ActionPanelState>();
-  state->setTitle(submenuModel->title);
-  if (submenuModel->stableId) { state->setId(*submenuModel->stableId); }
+  state->setTitle(QString::fromStdString(submenuModel->title));
+  if (submenuModel->stableId) { state->setId(QString::fromStdString(*submenuModel->stableId)); }
 
   ActionPanelSectionState *outsideSection = nullptr;
 
@@ -147,7 +108,7 @@ std::unique_ptr<ActionPanelState> buildSubmenuState(const ActionPannelSubmenuPtr
       if (!section) continue;
       outsideSection = nullptr;
 
-      auto sec = state->createSection(section->title);
+      auto sec = state->createSection(QString::fromStdString(section->title));
 
       for (const auto &item : section->items) {
         if (auto actionModel = std::get_if<ActionModel>(&item)) {
@@ -155,7 +116,7 @@ std::unique_ptr<ActionPanelState> buildSubmenuState(const ActionPannelSubmenuPtr
           if (actionModel->shortcut) { action->addShortcut(actionModel->shortcut.value()); }
           sec->addAction(action);
         } else if (auto submenuPtr = std::get_if<ActionPannelSubmenuPtr>(&item)) {
-          auto action = createSubmenuAction(*submenuPtr, notify, submenuCache, submit);
+          auto action = createSubmenuAction(*submenuPtr, notify, submit);
           if (action) { sec->addAction(action); }
         }
       }
@@ -166,7 +127,7 @@ std::unique_ptr<ActionPanelState> buildSubmenuState(const ActionPannelSubmenuPtr
       outsideSection->addAction(action);
     } else if (auto submenuPtr = std::get_if<ActionPannelSubmenuPtr>(&child)) {
       if (!outsideSection) { outsideSection = state->createSection(); }
-      auto action = createSubmenuAction(*submenuPtr, notify, submenuCache, submit);
+      auto action = createSubmenuAction(*submenuPtr, notify, submit);
       if (action) { outsideSection->addAction(action); }
     }
   }
@@ -175,15 +136,12 @@ std::unique_ptr<ActionPanelState> buildSubmenuState(const ActionPannelSubmenuPtr
 }
 
 std::unique_ptr<ActionPanelState> build(const ActionPannelModel &model, const NotifyFn &notify,
-                                        SubmenuCache *submenuCache, ActionPanelState::ShortcutPreset preset,
-                                        const SubmitFn &submit) {
-  updateSubmenuCache(submenuCache, model);
-
+                                        ActionPanelState::ShortcutPreset preset, const SubmitFn &submit) {
   auto panel = std::make_unique<ActionPanelState>();
   panel->setDirty(model.dirty);
-  panel->setTitle(model.title);
+  panel->setTitle(QString::fromStdString(model.title));
   panel->setShortcutPreset(preset);
-  if (model.stableId) { panel->setId(*model.stableId); }
+  if (model.stableId) { panel->setId(QString::fromStdString(*model.stableId)); }
 
   size_t idx = 0;
   ActionPanelSectionState *outsideSection = nullptr;
@@ -194,7 +152,7 @@ std::unique_ptr<ActionPanelState> build(const ActionPannelModel &model, const No
       if (!section) continue;
       outsideSection = nullptr;
 
-      auto sec = panel->createSection(section->title);
+      auto sec = panel->createSection(QString::fromStdString(section->title));
 
       for (const auto &sectionItem : section->items) {
         if (auto actionModel = std::get_if<ActionModel>(&sectionItem)) {
@@ -206,7 +164,7 @@ std::unique_ptr<ActionPanelState> build(const ActionPannelModel &model, const No
           sec->addAction(action);
           ++idx;
         } else if (auto submenuPtr = std::get_if<ActionPannelSubmenuPtr>(&sectionItem)) {
-          auto action = createSubmenuAction(*submenuPtr, notify, submenuCache, submit);
+          auto action = createSubmenuAction(*submenuPtr, notify, submit);
 
           if (!action) continue;
           if (idx == 0) { action->setPrimary(true); }
@@ -231,7 +189,7 @@ std::unique_ptr<ActionPanelState> build(const ActionPannelModel &model, const No
     if (auto submenuPtr = std::get_if<ActionPannelSubmenuPtr>(&item)) {
       if (!outsideSection) { outsideSection = panel->createSection(); }
 
-      auto action = createSubmenuAction(*submenuPtr, notify, submenuCache, submit);
+      auto action = createSubmenuAction(*submenuPtr, notify, submit);
       if (!action) continue;
       if (idx == 0) { action->setPrimary(true); }
 

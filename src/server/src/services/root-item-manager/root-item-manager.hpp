@@ -18,7 +18,6 @@
 #include <qnamespace.h>
 #include <qobject.h>
 #include <qobjectdefs.h>
-#include <qsqlquery.h>
 #include <qstring.h>
 #include <qhash.h>
 #include <qtmetamacros.h>
@@ -177,13 +176,6 @@ public:
   bool isGroup() const { return type() == Type::GroupProvider; }
 
   /**
-   * Generate the default set of preferences for this item.
-   * This function is called on _each_ startup and diffed against the existing preference values.
-   * Existing keys are untouched but new ones can be added.
-   */
-  virtual QJsonObject generateDefaultPreferences() const { return {}; }
-
-  /**
    * Called when the provider preferences are changed.
    */
   virtual void preferencesChanged(const QJsonObject &preferences) {}
@@ -194,12 +186,6 @@ public:
   // `preferencesChanged` call.
   virtual void initialized(const QJsonObject &preference) {}
 
-  /**
-   * Called only once, right after `initialized`. This can be used to transform the preference object and save
-   * the changes in database right away. This can be useful to implement migrations from a version to another.
-   */
-  virtual std::optional<QJsonObject> patchPreferences(const QJsonObject &values) { return {}; }
-
   virtual std::vector<std::shared_ptr<RootItem>> loadItems() const = 0;
   virtual PreferenceList preferences() const { return {}; }
 };
@@ -209,8 +195,9 @@ struct RootItemMetadata {
   bool enabled = true;
   bool favorite = false;
   bool fallback = false;
-  std::optional<std::chrono::time_point<std::chrono::high_resolution_clock>> lastVisitedAt;
+  std::optional<std::uint64_t> lastVisitedAt;
   std::optional<std::string> alias;
+  std::optional<std::string> shortcut;
   std::string providerId;
   std::shared_ptr<RootItem> item;
 };
@@ -271,6 +258,7 @@ public:
   void setPreferenceValues(const EntrypointId &id, const QJsonObject &preferences);
 
   bool setAlias(const EntrypointId &id, std::string_view alias);
+  bool setShortcut(const EntrypointId &id, std::string_view shortcut);
 
   QJsonObject getProviderPreferenceValues(const QString &id) const;
   QJsonObject getItemPreferenceValues(const EntrypointId &id) const;
@@ -286,10 +274,7 @@ public:
   bool moveFallbackDown(const EntrypointId &id);
   bool moveFallbackUp(const EntrypointId &id);
   bool enableFallback(const EntrypointId &id);
-  double computeScore(const RootItemMetadata &meta, int weight) const;
-  double computeRecencyScore(const RootItemMetadata &meta) const;
   std::vector<std::shared_ptr<RootItem>> queryFavorites(std::optional<int> limit = {});
-  std::vector<SearchableRootItem> querySuggestions(int limit = 5);
   bool resetRanking(const EntrypointId &id);
   bool registerVisit(const EntrypointId &id);
   bool setItemAsFavorite(const EntrypointId &item, bool value = true);

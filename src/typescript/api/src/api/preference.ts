@@ -1,21 +1,26 @@
+import { getClient } from "./client";
+import { closeMainWindow } from "./controls";
+import { getGlobal } from "./globals";
+
 export const getPreferenceValues = <
 	T = { [preferenceName: string]: any },
 >(): T => {
-	return (globalThis as any).vicinae.preferences;
+	return getGlobal().preferences;
 };
 
 /**
- * TODO: implement
- * @ignore
+ * Opens the extension preferences in the vicinae settings window.
  */
 export const openExtensionPreferences = async (): Promise<void> => {
 	console.error("openExtensionPreferences is not implemented");
+	await getClient().Command.openExtensionPreferences();
+	await closeMainWindow();
 };
 
 /**
- * TODO: implement
- * @ignore
+ * Open the command preferences in the vicinae settings window.
  */
 export const openCommandPreferences = async (): Promise<void> => {
-	console.error("openCommandPreferences is not implemented");
+	await getClient().Command.openCommandPreferences();
+	await closeMainWindow();
 };

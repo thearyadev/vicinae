@@ -69,8 +69,6 @@ jobs:
             -DBUILD_TESTS=ON  \
             -DVICINAE_PROVENANCE=binary_release \
             -DLTO=ON \
-            -DUSE_SYSTEM_PROTOBUF=OFF \
-            -DUSE_SYSTEM_ABSEIL=OFF \
             -DUSE_SYSTEM_CMARK_GFM=OFF \
             -DCMAKE_PREFIX_PATH="$Qt6_DIR" \
             -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}"
@@ -196,4 +194,14 @@ jobs:
           name: ${{ needs.build-binary.outputs.tag }}
           files: |
             *.AppImage
+
+  trigger-packaging:
+    needs: [build-binary, build-appimage]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger bumpver in packaging-arch
+        env:
+          GH_TOKEN: ${{ secrets.PACKAGING_AUR_TOKEN }}
+        run: |
+          gh workflow run bumpver.yml --repo vicinaehq/packaging-arch
 

@@ -26,3 +26,11 @@ heaptrack*
 
 .claude/*
 !.claude/CLAUDE.md
+
+.omx/
+.codex/
+.gitnexus/
+
+/tmp
+
+/internal-docs

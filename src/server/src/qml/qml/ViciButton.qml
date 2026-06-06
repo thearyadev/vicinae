@@ -11,7 +11,6 @@ Rectangle {
     property color foreground: root.variant === "accent" ? Theme.listItemSelectionFg : Theme.foreground
     property real iconSize: 16
     property real horizontalPadding: 12
-    property bool translucent: false
 
     signal clicked
 
@@ -23,18 +22,14 @@ Rectangle {
     implicitHeight: 36
     radius: 6
 
-    function _applyTranslucency(c) {
-        return root.translucent ? Qt.rgba(c.r, c.g, c.b, Theme.surfaceOpacity) : c;
-    }
-
     color: {
         switch (root.variant) {
         case "primary":
-            return root._applyTranslucency(root.hovered ? Theme.buttonPrimaryHoverBg : Theme.buttonPrimaryBg);
+            return root.hovered ? Theme.buttonPrimaryHoverBg : Theme.buttonPrimaryBg;
         case "secondary":
-            return root._applyTranslucency(root.hovered ? Theme.listItemHoverBg : Theme.secondaryBackground);
+            return root.hovered ? Theme.listItemHoverBg : Theme.secondaryBackground;
         case "accent":
-            return root._applyTranslucency(root.hovered ? Qt.lighter(Theme.accent, 1.15) : Theme.accent);
+            return root.hovered ? Qt.lighter(Theme.accent, 1.15) : Theme.accent;
         case "ghost":
         default:
             return root.hovered ? Theme.listItemHoverBg : "transparent";
@@ -44,12 +39,12 @@ Rectangle {
     border.width: root.bordered || root.activeFocus ? 1 : 0
     border.color: {
         if (root.activeFocus)
-            return root.variant === "accent" ? Theme.listItemSelectionFg : Theme.accent;
+            return Config.withAlpha(root.variant === "accent" ? Theme.listItemSelectionFg : Theme.accent, Config.windowOpacity);
         if (!root.bordered)
             return "transparent";
         if (root.variant === "secondary")
-            return Theme.inputBorder;
-        return Theme.divider;
+            return Config.withAlpha(Theme.inputBorder, Config.windowOpacity);
+        return Config.withAlpha(Theme.divider, Config.windowOpacity);
     }
 
     Row {

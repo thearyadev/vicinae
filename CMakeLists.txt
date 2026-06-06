@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 set(PROJECT_NAME vicinae)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_OSX_DEPLOYMENT_TARGET "14.4" CACHE STRING "Minimum macOS version to target")
 project(${PROJECT_NAME} VERSION 1.0.0 LANGUAGES C CXX)
 
 set(LIB_NAMESPACE "vicinae")
@@ -35,8 +36,6 @@ option(
 option(WAYLAND_LAYER_SHELL "Enable support for the layer shell Wayland protocol" ON)
 option(TYPESCRIPT_EXTENSIONS "Enable support for extensions built with React/Typescript (no browser involved)" ON)
 option(PREFER_STATIC_LIBS "When available, link to a library statically instead of dynamically" OFF)
-option(USE_SYSTEM_PROTOBUF "Use system protobuf instead of building it from source" ON)
-option(USE_SYSTEM_ABSEIL "Use system abseil (libabsl) instead of building it from source" ON)
 option(USE_SYSTEM_CMARK_GFM "Use system cmark-gfm (github's fork of cmark) instead of building it from source" ON)
 option(USE_SYSTEM_LAYER_SHELL "Use system qt layer shell instead of building it from source" ON)
 option(USE_SYSTEM_KF6 "Use system KDE syntax highlighting library for markdown code block highlight support" ON)
@@ -44,9 +43,7 @@ option(USE_SYSTEM_GLAZE "Use system glaze instead of fetching it. This is a head
 option(USE_SYSTEM_QT_KEYCHAIN "Use system qt-keychain instead of building it from source. Note: still depends on system libsecret." ON)
 option(LIBQALCULATE_BACKEND "Compile in support for the Qalculate! calculator backend" ON)
 option(ENABLE_SANITIZERS "Enable ASan + UBSan for debug builds" OFF)
-option(ENABLE_PREVIEW_FEATURES "Enable preview features that are not yet ready for global release" OFF)
 option(ENABLE_CLANG_TIDY "Run clang-tidy during compilation" OFF)
-option(INSTALL_UDEV_RULES "Install udev rules to enable additional features such as paste" ON)
 option(INSTALL_MODULES_LOAD_CONFIG "Install config files to auto load required kernel modules" ON)
 
 if (ENABLE_CLANG_TIDY)
@@ -67,42 +64,78 @@ if (NOT USE_SYSTEM_GLAZE)
 	import_glaze()
 endif()
 
-if (NOT USE_SYSTEM_KF6)
+if (NOT USE_SYSTEM_KF6 OR APPLE)
 	include(KF6)
 	import_kf6()
 endif()
 
 if (APPLE)
+	find_program(BREW_EXECUTABLE brew)
+	if (BREW_EXECUTABLE)
+		execute_process(
+			COMMAND ${BREW_EXECUTABLE} --prefix
+			OUTPUT_VARIABLE HOMEBREW_PREFIX
+			OUTPUT_STRIP_TRAILING_WHITESPACE
+			RESULT_VARIABLE _brew_status
+		)
+		if (NOT _brew_status EQUAL 0)
+			set(HOMEBREW_PREFIX "")
+		endif()
+	endif()
+
+	if (HOMEBREW_PREFIX)
+		message(STATUS "Detected Homebrew prefix: ${HOMEBREW_PREFIX}")
+		if (NOT QT_DIR AND EXISTS "${HOMEBREW_PREFIX}/opt/qt/lib/cmake/Qt6")
+			list(PREPEND CMAKE_PREFIX_PATH "${HOMEBREW_PREFIX}/opt/qt")
+		endif()
+		if (NOT DEFINED ENV{ICU_ROOT} AND EXISTS "${HOMEBREW_PREFIX}/opt/icu4c")
+			set(ENV{ICU_ROOT} "${HOMEBREW_PREFIX}/opt/icu4c")
+		endif()
+		link_directories(${HOMEBREW_PREFIX}/lib)
+	endif()
+
 	set(WAYLAND_LAYER_SHELL OFF)
 	set(WLR_DATA_CONTROL OFF)
+	set(USE_SYSTEM_CMARK_GFM OFF)
 endif()
+
+set(VENDOR_DIR ${CMAKE_SOURCE_DIR}/vendor)
 
 include_directories(
-    ${CMAKE_BINARY_DIR}/generated  # For version.h
+    ${CMAKE_BINARY_DIR}
+    ${CMAKE_SOURCE_DIR}/vendor
 )
 
+find_package(glaze)
+
 add_subdirectory(src/browser-extension)
-add_subdirectory(src/snippet)
-add_subdirectory(${LIB_DIR}/script-command)
-add_subdirectory(${LIB_DIR}/emoji)
-add_subdirectory(${LIB_DIR}/xdgpp)
-add_subdirectory(${LIB_DIR}/vicinae-ipc)
 add_subdirectory(${LIB_DIR}/common)
-add_subdirectory(${LIB_DIR}/linux-utils)
+add_subdirectory(${LIB_DIR}/script-command)
+add_subdirectory(${LIB_DIR}/glyph)
+add_subdirectory(${LIB_DIR}/xdgpp)
+add_subdirectory(${LIB_DIR}/fuzzy)
 
-set(PROTO_DIR ${CMAKE_SOURCE_DIR}/src/proto)
+# statically linked vendored libs.
+# Most of the other vendored libs are header only so no need for a CMakeLists.txt
+add_subdirectory(${VENDOR_DIR}/sqlcipher)
+add_subdirectory(${VENDOR_DIR}/pugixml)
+add_subdirectory(${VENDOR_DIR}/zip)
 
-if (USE_SYSTEM_PROTOBUF)
-	set(USE_SYSTEM_ABSEIL ON)
+if (UNIX AND NOT APPLE)
+	add_subdirectory(${LIB_DIR}/linux-utils)
+	add_subdirectory(src/snippet)
+	add_subdirectory(src/file-indexer)
 endif()
+add_subdirectory(${LIB_DIR}/figura)
+
+set(FIGURA_DIR ${CMAKE_SOURCE_DIR}/figura)
+
 
 # End of Vicinae build configuration options
 
 if (PREFER_STATIC_LIBS)
 	set(CMAKE_FIND_LIBRARY_SUFFIXES ".a" ".so" ".dylib")
 	set(BUILD_SHARED_LIBS OFF)
-	set(USE_SYSTEM_PROTOBUF OFF)
-	set(USE_SYSTEM_ABSEIL OFF)
 	set(USE_SYSTEM_CMARK_GFM OFF)
 	set(USE_SYSTEM_LAYER_SHELL OFF)
 	set(USE_SYSTEM_QT_KEYCHAIN OFF)
@@ -156,31 +189,11 @@ if (NOT USE_SYSTEM_CMARK_GFM)
   set(CMARK_EXT_LIBRARY "libcmark-gfm-extensions_static")
 endif()
 
-if (NOT USE_SYSTEM_ABSEIL)
-	include(Abseil)
-	checkout_abseil()
-endif()
-
-if (NOT USE_SYSTEM_PROTOBUF)
-	include(Protobuf)
-	checkout_protobuf()
-	set(COMMON_PROTO_DIR ${CMAKE_CURRENT_BINARY_DIR}/_deps/protobuf-src/src)
-endif()
-
-find_package(glaze)
-
-set(CMAKE_FIND_PACKAGE_PREFER_CONFIG TRUE)
-find_package(Protobuf)
-unset(CMAKE_FIND_PACKAGE_PREFER_CONFIG)
-
 if (TYPESCRIPT_EXTENSIONS)
 	add_subdirectory(src/typescript)
 	add_compile_definitions(HAS_TYPESCRIPT_EXTENSIONS=1)
 endif()
 
-if (ENABLE_PREVIEW_FEATURES)
-	add_compile_definitions(ENABLE_PREVIEW_FEATURES=1)
-endif()
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -232,28 +245,25 @@ if (CCACHE AND NOT IGNORE_CCACHE)
 endif()
 
 add_compile_definitions(BUILD_INFO="${BUILD_INFO}")
-add_subdirectory(src/server)
 add_subdirectory(src/cli)
+add_subdirectory(src/server)
 
 if (UNIX AND NOT APPLE)
 	add_subdirectory(src/data-control-server)
 endif()
 
 set(INSTALL_SHARE ${CMAKE_INSTALL_PREFIX}/share)
-set(INSTALL_UDEV ${CMAKE_INSTALL_PREFIX}/lib/udev/rules.d)
 set(INSTALL_MODULES ${CMAKE_INSTALL_PREFIX}/lib/modules-load.d)
 set(VICINAE_INSTALL_SHARE ${INSTALL_SHARE}/vicinae)
 set(VICINAE_THEME_DIR ${VICINAE_INSTALL_SHARE}/themes)
 
-make_directory(${VICINAE_INSTALL_SHARE})
-file(REMOVE_RECURSE ${VICINAE_THEME_DIR})
-install(DIRECTORY ./extra/themes DESTINATION ${VICINAE_INSTALL_SHARE})
+if(NOT APPLE)
+	make_directory(${VICINAE_INSTALL_SHARE})
+	file(REMOVE_RECURSE ${VICINAE_THEME_DIR})
+	install(DIRECTORY ./extra/themes DESTINATION ${VICINAE_INSTALL_SHARE})
+endif()
 
 if (UNIX AND NOT APPLE)
-	if (INSTALL_UDEV_RULES)
-		install(DIRECTORY ${EXTRA_DIR}/udev/rules.d/ DESTINATION ${INSTALL_UDEV})
-	endif()
-
 	if (INSTALL_MODULES_LOAD_CONFIG)
 		install(DIRECTORY ${EXTRA_DIR}/modules-load.d/ DESTINATION ${INSTALL_MODULES})
 	endif()

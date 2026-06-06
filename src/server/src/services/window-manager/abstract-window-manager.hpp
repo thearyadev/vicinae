@@ -27,6 +27,7 @@ signals:
    * or killed.
    */
   void windowsChanged() const;
+  void focusChanged() const;
 
 public:
   struct WindowBounds {
@@ -101,11 +102,6 @@ public:
    * a unique string. Defaults to `id()` if not reimplemented.
    */
   virtual QString displayName() const { return id(); }
-
-  /**
-   * Will eventually be moved elsewhere. For this trigger dim around for Hyprland only.
-   */
-  virtual bool setDimAround(bool value = true) { return false; }
 
   virtual WindowList listWindowsSync() const { return {}; };
 

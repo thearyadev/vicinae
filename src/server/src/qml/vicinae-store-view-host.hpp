@@ -1,19 +1,18 @@
 #pragma once
+#include "section-list-model.hpp"
+#include "vicinae-store-model.hpp"
 #include "bridge-view.hpp"
 #include "services/extension-store/vicinae-store.hpp"
+#include "ui/image/url.hpp"
 #include <QFutureWatcher>
-#include <QTimer>
-
-class VicinaeStoreModel;
 
 class VicinaeStoreViewHost : public ViewHostBase {
   Q_OBJECT
+  Q_PROPERTY(QObject *listModel READ listModel CONSTANT)
 
 signals:
 
 public:
-  Q_PROPERTY(QObject *listModel READ listModel CONSTANT)
-
   VicinaeStoreViewHost();
 
   QUrl qmlComponentUrl() const override;
@@ -22,20 +21,18 @@ public:
   void loadInitialData() override;
   void textChanged(const QString &text) override;
   void onReactivated() override;
+  QString initialNavigationTitle() const override;
+  ImageURL initialNavigationIcon() const override;
 
-  QObject *listModel() const;
+  QObject *listModel() const { return const_cast<SectionListModel *>(&m_model); }
 
 private:
   void fetchExtensions();
-  void handleFinishedPage();
-  void handleFinishedQuery();
-  void handleDebounce();
+  void handleFinished();
   void refresh();
 
-  VicinaeStoreModel *m_model = nullptr;
+  SectionListModel m_model{this};
+  VicinaeStoreSection m_section;
   VicinaeStoreService *m_store = nullptr;
-  QFutureWatcher<VicinaeStore::ListResult> m_listResultWatcher;
-  QFutureWatcher<VicinaeStore::ListResult> m_queryResultWatcher;
-  QString m_lastQueryText;
-  QTimer m_debounce;
+  QFutureWatcher<VicinaeStore::ListResult> m_watcher;
 };

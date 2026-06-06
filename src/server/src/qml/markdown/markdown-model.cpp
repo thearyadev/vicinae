@@ -1,4 +1,6 @@
 #include "markdown-model.hpp"
+#include "font-service.hpp"
+#include "image-url.hpp"
 #include "syntax-highlighter.hpp"
 #include "service-registry.hpp"
 #include "services/app-service/app-service.hpp"
@@ -10,8 +12,7 @@
 #include <cmark-gfm.h>
 #include <cmark-gfm-core-extensions.h>
 #include <cmark-gfm-extension_api.h>
-#include <libxml/HTMLparser.h>
-#include <libxml/tree.h>
+#include <pugixml/pugixml.hpp>
 #include <cstring>
 #include <utility>
 
@@ -31,18 +32,26 @@ GfmNodeType getGfmNodeType(cmark_node *node) {
 }
 
 QString imageProviderUrl(const QString &rawUrl) {
-  if (rawUrl.startsWith(QStringLiteral("image://vicinae/"))) return rawUrl;
-
   QUrl const url(rawUrl);
-  auto scheme = url.scheme();
-  if (scheme == "https" || scheme == "http") return QStringLiteral("image://vicinae/http:") + rawUrl;
-  if (scheme == "data") return QStringLiteral("image://vicinae/datauri:") + rawUrl;
+  auto const scheme = url.scheme();
+
+  if (scheme == "https" || scheme == "http") return ImageURL::http(url).toString();
+
+  if (scheme == "data") {
+    ImageURL imgUrl;
+    imgUrl.setType(ImageURLType::DataURI);
+    imgUrl.setName(rawUrl);
+    return imgUrl.toString();
+  }
+
   if (scheme == "file") {
     auto path = url.host().isEmpty() ? url.path() : url.host() + url.path();
-    return QStringLiteral("image://vicinae/local:") + path;
+    return ImageURL::local(path).toString();
   }
-  auto path = url.host() + url.path();
-  return QStringLiteral("image://vicinae/local:") + path;
+
+  if (scheme.isEmpty()) return ImageURL::local(rawUrl).toString();
+
+  return {};
 }
 
 struct InlineContext {
@@ -50,6 +59,7 @@ struct InlineContext {
   const QString &inlineCodeBg;
   const QString &linkColor;
   const QString &textColor;
+  const QString &monoFamily;
 };
 
 QString renderInlineHtml(cmark_node *node, const InlineContext &ctx);
@@ -73,8 +83,8 @@ QString renderOneInline(cmark_node *cur, const InlineContext &ctx) {
   case CMARK_NODE_CODE:
     result += QStringLiteral("<code style=\"color:%1;background:%2;"
                              "padding:1px 4px;border-radius:3px;"
-                             "font-family:monospace;\">")
-                  .arg(ctx.inlineCodeFg, ctx.inlineCodeBg);
+                             "font-family:'%3',monospace;\">")
+                  .arg(ctx.inlineCodeFg, ctx.inlineCodeBg, ctx.monoFamily);
     result += QString::fromUtf8(cmark_node_get_literal(cur)).toHtmlEscaped();
     result += QStringLiteral("</code>");
     break;
@@ -219,18 +229,15 @@ struct HtmlBlockResult {
   std::vector<QVariantMap> extractedImages;
 };
 
-void processHtmlNodes(xmlNode *node, HtmlBlockResult &result) {
-  for (xmlNode const *cur = node; cur; cur = cur->next) {
-    if (cur->type == XML_ELEMENT_NODE) {
-      if (xmlStrcmp(cur->name, BAD_CAST "img") == 0) {
+void processHtmlNodes(pugi::xml_node node, HtmlBlockResult &result) {
+  for (auto cur = node.first_child(); cur; cur = cur.next_sibling()) {
+    if (cur.type() == pugi::node_element) {
+      if (std::strcmp(cur.name(), "img") == 0) {
         QString src;
         int w = 0, h = 0;
-        for (xmlAttrPtr attr = cur->properties; attr; attr = attr->next) {
-          xmlChar *val = xmlNodeListGetString(cur->doc, attr->children, 1);
-          if (!val) continue;
-          QString const name = QString::fromUtf8(reinterpret_cast<const char *>(attr->name)).toLower();
-          QString const value = QString::fromUtf8(reinterpret_cast<const char *>(val));
-          xmlFree(val);
+        for (auto attr = cur.first_attribute(); attr; attr = attr.next_attribute()) {
+          QString const name = QString::fromUtf8(attr.name()).toLower();
+          QString const value = QString::fromUtf8(attr.value());
 
           if (name == "src") {
             src = value;
@@ -261,15 +268,11 @@ void processHtmlNodes(xmlNode *node, HtmlBlockResult &result) {
           result.extractedImages.push_back(img);
         }
       } else {
-        processHtmlNodes(cur->children, result);
+        processHtmlNodes(cur, result);
       }
-    } else if (cur->type == XML_TEXT_NODE) {
-      xmlChar *content = xmlNodeGetContent(cur);
-      if (content) {
-        QString const text = QString::fromUtf8(reinterpret_cast<const char *>(content)).trimmed();
-        if (!text.isEmpty()) result.html += text.toHtmlEscaped();
-        xmlFree(content);
-      }
+    } else if (cur.type() == pugi::node_pcdata) {
+      QString const text = QString::fromUtf8(cur.value()).trimmed();
+      if (!text.isEmpty()) result.html += text.toHtmlEscaped();
     }
   }
 }
@@ -313,6 +316,7 @@ void MarkdownModel::rebuildInlineStyles() {
   m_inlineCodeBg = theme.resolve(SemanticColor::SecondaryBackground).name(QColor::HexRgb);
   m_linkColor = theme.resolve(SemanticColor::LinkDefault).name(QColor::HexRgb);
   m_textColor = theme.resolve(SemanticColor::Foreground).name(QColor::HexRgb);
+  m_monoFamily = ServiceRegistry::instance()->fontService()->builtinMonoFontFamily();
   m_syntaxStyles = syntax::buildStyleMap(theme);
 }
 
@@ -334,7 +338,7 @@ std::vector<MarkdownModel::Block> MarkdownModel::parseBlocks(const QString &mark
   cmark_node *root = cmark_parser_finish(parser);
   cmark_parser_free(parser);
 
-  InlineContext ctx{m_inlineCodeFg, m_inlineCodeBg, m_linkColor, m_textColor};
+  InlineContext ctx{m_inlineCodeFg, m_inlineCodeBg, m_linkColor, m_textColor, m_monoFamily};
 
   for (auto *node = cmark_node_first_child(root); node; node = cmark_node_next(node)) {
     auto type = cmark_node_get_type(node);
@@ -446,24 +450,22 @@ std::vector<MarkdownModel::Block> MarkdownModel::parseBlocks(const QString &mark
       QString const html = QString::fromUtf8(cmark_node_get_literal(node));
       QByteArray const wrapped = "<div>" + html.toUtf8() + "</div>";
 
-      htmlDocPtr doc = htmlReadMemory(wrapped.constData(), wrapped.size(), nullptr, nullptr,
-                                      HTML_PARSE_RECOVER | HTML_PARSE_NOERROR | HTML_PARSE_NOWARNING);
-      if (doc) {
-        xmlNode const *xmlRoot = xmlDocGetRootElement(doc);
-        if (xmlRoot) {
-          HtmlBlockResult result;
-          processHtmlNodes(xmlRoot->children, result);
+      pugi::xml_document doc;
+      auto parseResult = doc.load_buffer(wrapped.constData(), wrapped.size(),
+                                         pugi::parse_default | pugi::parse_ws_pcdata_single);
+      if (parseResult) {
+        auto root = doc.first_child();
+        HtmlBlockResult result;
+        processHtmlNodes(root, result);
 
-          for (auto &img : result.extractedImages)
-            blocks.push_back({MdBlockType::Image, img});
+        for (auto &img : result.extractedImages)
+          blocks.push_back({MdBlockType::Image, img});
 
-          if (!result.html.isEmpty()) {
-            QVariantMap data;
-            data[QStringLiteral("html")] = result.html;
-            blocks.push_back({MdBlockType::HtmlBlock, data});
-          }
+        if (!result.html.isEmpty()) {
+          QVariantMap data;
+          data[QStringLiteral("html")] = result.html;
+          blocks.push_back({MdBlockType::HtmlBlock, data});
         }
-        xmlFreeDoc(doc);
       } else {
         QVariantMap data;
         data[QStringLiteral("html")] = html;

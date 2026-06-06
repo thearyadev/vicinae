@@ -1,5 +1,4 @@
 #pragma once
-#include "proto/wlr-clipboard.pb.h"
 #include "services/clipboard/clipboard-server.hpp"
 #include <qprocess.h>
 
@@ -11,10 +10,10 @@ public:
   bool isActivatable() const override;
   QString id() const override;
   int activationPriority() const override;
+  bool setClipboardContent(QMimeData *data) override;
 
 private:
   bool isAlive() const override;
-  void handleMessage(const proto::ext::wlrclip::Selection &selection);
   void handleRead();
   void handleReadError();
   void handleExit(int code, QProcess::ExitStatus status);

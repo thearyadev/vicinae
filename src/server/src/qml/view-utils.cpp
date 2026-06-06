@@ -19,13 +19,12 @@ FilePreviewContent resolveFilePreview(const std::filesystem::path &path, QMimeDa
     result.imageSource = imageSourceFor(ImageURL::local(path));
   } else if (Utils::isTextMimeType(mime)) {
     QFile file(qpath);
-    if (file.open(QIODevice::ReadOnly)) {
-      static constexpr qint64 MAX_PREVIEW = static_cast<qint64>(32 * 1024);
-      result.textContent = QString::fromUtf8(file.read(MAX_PREVIEW));
+    if (file.open(QIODevice::ReadOnly) && file.size() <= MAX_PREVIEW_SIZE) {
+      static constexpr qint64 MAX_DISPLAY = 10 * 1024;
+      result.textContent = QString::fromUtf8(file.read(MAX_DISPLAY));
     }
   } else {
-    result.imageSource = imageSourceFor(
-        ImageURL::system(mime.iconName()).withFallback(ImageURL::system(mime.genericIconName())));
+    result.imageSource = imageSourceFor(ImageURL::fileIcon(path));
   }
 
   return result;
@@ -37,17 +36,17 @@ QVariantList metadataToVariantList(const MetadataModel &metadata) {
     if (auto *label = std::get_if<MetadataLabel>(&child)) {
       QVariantMap entry;
       entry[QStringLiteral("type")] = QStringLiteral("label");
-      entry[QStringLiteral("label")] = label->title;
-      entry[QStringLiteral("value")] = label->text;
+      entry[QStringLiteral("label")] = QString::fromStdString(label->title);
+      entry[QStringLiteral("value")] = QString::fromStdString(label->text);
       if (label->icon) entry[QStringLiteral("icon")] = imageSourceFor(ImageURL(*label->icon));
       if (label->color) entry[QStringLiteral("valueColor")] = OmniPainter::resolveColor(*label->color).name();
       result.append(entry);
     } else if (auto *link = std::get_if<MetadataLink>(&child)) {
       QVariantMap entry;
       entry[QStringLiteral("type")] = QStringLiteral("link");
-      entry[QStringLiteral("label")] = link->title;
-      entry[QStringLiteral("value")] = link->text;
-      entry[QStringLiteral("url")] = link->target;
+      entry[QStringLiteral("label")] = QString::fromStdString(link->title);
+      entry[QStringLiteral("value")] = QString::fromStdString(link->text);
+      entry[QStringLiteral("url")] = QString::fromStdString(link->target);
       result.append(entry);
     } else if (std::get_if<MetadataSeparator>(&child)) {
       QVariantMap entry;
@@ -56,11 +55,11 @@ QVariantList metadataToVariantList(const MetadataModel &metadata) {
     } else if (auto *tags = std::get_if<TagListModel>(&child)) {
       QVariantMap entry;
       entry[QStringLiteral("type")] = QStringLiteral("tags");
-      entry[QStringLiteral("label")] = tags->title;
+      entry[QStringLiteral("label")] = QString::fromStdString(tags->title);
       QVariantList tagList;
       for (const auto &tag : tags->items) {
         QVariantMap t;
-        t[QStringLiteral("text")] = tag.text;
+        t[QStringLiteral("text")] = QString::fromStdString(tag.text);
         if (tag.color) t[QStringLiteral("color")] = OmniPainter::resolveColor(*tag.color).name();
         if (tag.icon) t[QStringLiteral("icon")] = imageSourceFor(ImageURL(*tag.icon));
         tagList.append(t);
@@ -77,11 +76,11 @@ QVariantMap accessoryToVariant(const AccessoryModel &acc) {
   bool fill = false;
 
   if (auto *tag = std::get_if<AccessoryModel::Tag>(&acc.data)) {
-    m[QStringLiteral("text")] = tag->value;
+    m[QStringLiteral("text")] = QString::fromStdString(tag->value);
     if (tag->color) m[QStringLiteral("color")] = OmniPainter::resolveColor(*tag->color).name();
     fill = true;
   } else if (auto *text = std::get_if<AccessoryModel::Text>(&acc.data)) {
-    m[QStringLiteral("text")] = text->value;
+    m[QStringLiteral("text")] = QString::fromStdString(text->value);
     if (text->color) m[QStringLiteral("color")] = OmniPainter::resolveColor(*text->color).name();
   }
 
@@ -92,7 +91,7 @@ QVariantMap accessoryToVariant(const AccessoryModel &acc) {
     if (color && url.type() == ImageURLType::Builtin) url.setFill(color);
     m[QStringLiteral("icon")] = imageSourceFor(url);
   }
-  if (acc.tooltip) m[QStringLiteral("tooltip")] = *acc.tooltip;
+  if (acc.tooltip) m[QStringLiteral("tooltip")] = QString::fromStdString(*acc.tooltip);
 
   return m;
 }

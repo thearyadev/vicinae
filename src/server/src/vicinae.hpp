@@ -21,7 +21,6 @@ static const QString DOC_URL = "https://docs.vicinae.com";
 static const QString DOC_TELEMETRY_URL = DOC_URL + "/telemetry";
 static const QString HEADLINE = "A focused launcher for your desktop — native, fast, extensible";
 static const QString APP_ID = "vicinae";
-static constexpr const char *LAYER_SCOPE = "vicinae";
 static const QString APP_SCHEME = APP_ID;
 static const std::set<QString> APP_SCHEMES = {APP_SCHEME, "raycast", "com.raycast"};
 static const QString DEFAULT_ICON_THEME_NAME = "vicinae";
@@ -35,7 +34,7 @@ static const QString RAYCAST_NPM_API_PACKAGE = "@raycast/api";
 static const QString DISCORD_INVITE_LINK = "https://discord.gg/rP4ecD42p7";
 static const QString GH_SPONSOR_LINK = "https://github.com/sponsors/vicinaehq";
 
-static const SemanticColor ACCENT_COLOR = SemanticColor::Orange;
+static const SemanticColor ACCENT_COLOR = SemanticColor::Accent;
 
 std::filesystem::path runtimeDir();
 std::filesystem::path commandSocketPath();
@@ -43,6 +42,21 @@ std::filesystem::path pidFile();
 std::filesystem::path dataDir();
 std::filesystem::path stateDir();
 std::filesystem::path configDir();
+
+// Read-only resources shipped with the application. On macOS this is
+// Vicinae.app/Contents/Resources; on other platforms it is the install-prefix
+// share directory (or empty if we cannot locate it).
+std::filesystem::path bundleResourceDir();
+
+// System-wide read-only directories that may contain Vicinae assets.
+// macOS: { bundleResourceDir() }. Linux: $XDG_DATA_DIRS each suffixed with
+// "vicinae". Empty entries are stripped.
+std::vector<std::filesystem::path> systemDataDirs();
+
+// Per-feature search paths in priority order: user dataDir() / subdir first,
+// then each systemDataDirs() entry / subdir. Used by themes, extensions,
+// scripts, etc.
+std::vector<std::filesystem::path> dataSearchPaths(std::string_view subdir);
 
 void ensureDirectories();
 std::vector<std::filesystem::path> systemPaths();

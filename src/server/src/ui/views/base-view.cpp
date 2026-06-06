@@ -1,6 +1,8 @@
 #include "ui/views/base-view.hpp"
 #include "common.hpp"
 #include "navigation-controller.hpp"
+#include "ui/action-pannel/action-list-view.hpp"
+#include "ui/action-pannel/action-panel-view.hpp"
 #include <qlogging.h>
 #include <stdexcept>
 
@@ -24,12 +26,31 @@ void BaseView::setProxy(BaseView *proxy) {
   setContext(proxy->context());
 }
 
-void BaseView::clearActions() { setActions(std::make_unique<ActionPanelState>()); }
+void BaseView::clearActions() {
+  if (m_rootPanel) {
+    m_rootPanel->deleteLater();
+    m_rootPanel = nullptr;
+  }
+
+  if (m_ctx) { m_ctx->navigation->notifyActionPanelChanged(m_navProxy); }
+}
 
 void BaseView::setActions(std::unique_ptr<ActionPanelState> actions) {
-  if (!m_ctx) return;
-  m_ctx->navigation->setActions(std::move(actions), m_navProxy);
+  auto *view = new ActionListView(this);
+  view->adoptState(std::move(actions));
+  setActions(view);
 }
+
+void BaseView::setActions(ActionPanelView *view) {
+  if (m_rootPanel) { m_rootPanel->deleteLater(); }
+
+  m_rootPanel = view;
+  if (view) { view->setParent(this); }
+
+  if (m_ctx) { m_ctx->navigation->notifyActionPanelChanged(m_navProxy); }
+}
+
+ActionPanelView *BaseView::actionPanelRoot() const { return m_rootPanel; }
 
 bool BaseView::supportsSearch() const { return true; }
 

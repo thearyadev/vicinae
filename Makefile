@@ -4,6 +4,7 @@ RM								:= rm
 TAG 							:= $(shell git describe --tags --abbrev=0)
 APPIMAGE_BUILD_ENV_DIR			:= ./scripts/runners/appimage/
 APPIMAGE_BUILD_ENV_IMAGE_TAG	:= vicinae/appimage-build-env
+FIGURA_CC						:= $(BIN_DIR)/figura
 
 release:
 	cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -B $(BUILD_DIR)
@@ -21,9 +22,17 @@ preview:
 .PHONY: preview
 
 debug:
-	cmake -G Ninja -DLTO=OFF -DENABLE_PREVIEW_FEATURES=ON -DENABLE_SANITIZERS=ON -DBUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug -B $(BUILD_DIR)
-	cmake --build $(BUILD_DIR)
+	cmake -GNinja -DLTO=OFF -DENABLE_PREVIEW_FEATURES=ON -DENABLE_SANITIZERS=ON -DBUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug -B $(BUILD_DIR)
+	cmake --build $(BUILD_DIR) --parallel
 .PHONY: debug
+
+mac-bundle:
+	./scripts/macdeploy.sh $(BUILD_DIR)
+.PHONY: mac-bundle
+
+mac-deps:
+	./scripts/macos-setup.sh
+.PHONY: mac-deps
 
 debug-tidy:
 	# we need to run tidy with clang to avoid false positives
@@ -44,10 +53,10 @@ strip:
 .PHONY: strip
 
 test:
-	./$(BIN_DIR)/vicinae-emoji-tests
+	./$(BIN_DIR)/vicinae-glyph-tests
+	./$(BIN_DIR)/vicinae-fuzzy-tests
 	./$(BIN_DIR)/xdgpp-tests
 	./$(BIN_DIR)/scriptcommand-tests
-	./$(BIN_DIR)/vicinae-server-tests
 .PHONY: test
 
 static:
@@ -55,12 +64,17 @@ static:
 	cmake --build $(BUILD_DIR)
 .PHONY: static
 
+# things we can't really do in cmake. should be run with elevated privileges
+postbuild:
+	setcap "cap_dac_override+ep" ./build/bin/vicinae-input-server
+.PHONY: postbuild
+
 # optimize for portability (build problematic libs statically)
 # this will increase compile time as more libraries will have to be compiled from source,
 # but the resulting binary will be more portable across different distros, especially the ones
 # shipping older packages.
 portable:
-	cmake -G Ninja -DUSE_SYSTEM_PROTOBUF=OFF -DUSE_SYSTEM_ABSEIL=OFF -DUSE_SYSTEM_CMARK_GFM=OFF -B $(BUILD_DIR)
+	cmake -G Ninja -DUSE_SYSTEM_CMARK_GFM=OFF -B $(BUILD_DIR)
 	cmake --build $(BUILD_DIR)
 .PHONY: portable
 
@@ -87,28 +101,41 @@ appimage-build-env-push:
 	docker push $(APPIMAGE_BUILD_ENV_IMAGE_TAG)
 .PHONY: appimage-build-env-push
 
+NPROC := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+CLANG_FORMAT := $(shell command -v clang-format 2>/dev/null || echo /opt/homebrew/opt/llvm/bin/clang-format)
+
 qmlformat:
-	find ./src -type f -name '*.qml' -print0 | xargs -0 -n 10 -P $(shell nproc) qmlformat -i
+	find ./src -type f -name '*.qml' -print0 | xargs -0 -n 10 -P $(NPROC) qmlformat -i
 .PHONY: qmlformat
 
-format: qmlformat
-	find ./src -type f \( -name '*.cpp' -o -name '*.hpp' \) -print0 | xargs -0 -n 10 -P $(shell nproc) clang-format -i
+tsfmt:
+	cd src/typescript && biome format --write .
+.PHONY: tsfmt
+
+clang-format:
+	find ./src -type f \( -name '*.cpp' -o -name '*.hpp' \) -print0 | xargs -0 -n 10 -P $(NPROC) clang-format -i
+.PHONY: clang-format
+
+format: qmlformat tsfmt clang-format
 .PHONY: format
 
 check-format:
-	find ./src -type f \( -name '*.cpp' -o -name '*.hpp' \) -print0 | xargs -0 -n 10 -P $(shell nproc) clang-format --dry-run -Werror
+	find ./src -type f \( -name '*.cpp' -o -name '*.hpp' \) -print0 | xargs -0 -n 10 -P $(NPROC) $(CLANG_FORMAT) --dry-run -Werror
 .PHONY: check-format
 
 bump-patch:
 	./scripts/bump_version.sh patch
-	make update-manifest
 .PHONY: bump-patch
 
 bump-minor:
 	./scripts/bump_version.sh minor
-	make update-manifest
 .PHONY: bump-minor
 
+bump-major:
+	./scripts/bump_version.sh major
+.PHONY: bump-major
+
+# Regenerate the manifest in place from the latest existing tag (does not bump).
 update-manifest:
 	./scripts/update-manifest.sh ./manifest.yaml
 .PHONY: update-manifest
@@ -137,6 +164,13 @@ clean:
 	$(RM) -rf ./scripts/.tmp
 	$(RM) -rf ./src/lib/*/build
 .PHONY: clean
+
+
+figen:
+	$(FIGURA_CC) compile ./figura/tsapi.fig --client typescript --output ./src/typescript/api/src/api/proto/api.ts
+	$(FIGURA_CC) compile ./figura/tsapi.fig --client typescript --output ./src/typescript/extension-manager/src/proto/api.ts
+.PHONY:
+	figen
 
 re: clean release
 .PHONY: re

@@ -1,12 +1,13 @@
 #include "extension-view-host.hpp"
+#include "extension/extension-action-list-view.hpp"
 #include "navigation-controller.hpp"
 #include "view-utils.hpp"
 #include <chrono>
 
 static const std::chrono::milliseconds THROTTLE_DEBOUNCE_DURATION(300);
 
-ExtensionViewHost::ExtensionViewHost(ExtensionCommandController *controller, QObject *parent)
-    : ViewHostBase(), m_controller(controller), m_searchDebounce(new QTimer(this)) {
+ExtensionViewHost::ExtensionViewHost(ExtensionActionPanelBuilder::NotifyFn notify, QObject *parent)
+    : ViewHostBase(), m_notify(std::move(notify)), m_searchDebounce(new QTimer(this)) {
   m_searchDebounce->setSingleShot(true);
   connect(m_searchDebounce, &QTimer::timeout, this, &ExtensionViewHost::handleDebouncedSearch);
 }
@@ -40,18 +41,36 @@ void ExtensionViewHost::onReactivated() {
       auto notify = [this](const QString &handler, const QJsonArray &args) {
         notifyExtension(handler, args);
       };
-      setActions(ExtensionActionPanelBuilder::build(*detail->actions, notify, &m_submenuCache));
+      setActions(ExtensionActionPanelBuilder::build(*detail->actions, notify));
     }
   } else if (activeModel<ExtensionFormModel>() && m_formActions) {
     auto *form = activeModel<ExtensionFormModel>();
     auto notify = [this](const QString &handler, const QJsonArray &args) { notifyExtension(handler, args); };
     auto submit = [this, form]() -> std::expected<QJsonObject, QString> { return form->submit(); };
-    setActions(ExtensionActionPanelBuilder::build(*m_formActions, notify, &m_submenuCache,
+    setActions(ExtensionActionPanelBuilder::build(*m_formActions, notify,
                                                   ActionPanelState::ShortcutPreset::Form, submit));
   }
 }
 
+void ExtensionViewHost::setActions(std::unique_ptr<ActionPanelState> actions) {
+  auto *root = actionPanelRoot();
+
+  if (root && !actions->id().isEmpty() && root->id() == actions->id()) {
+    static_cast<ActionListView *>(root)->adoptState(std::move(actions));
+    if (context()) { context()->navigation->notifyActionPanelChanged(this); }
+    return;
+  }
+
+  auto *view = new ExtensionActionListView(
+      [this](const QString &handler, const QJsonArray &args) { notifyExtension(handler, args); }, QString(),
+      this);
+  view->adoptState(std::move(actions));
+  BaseView::setActions(static_cast<ActionPanelView *>(view));
+}
+
 void ExtensionViewHost::render(const RenderModel &model) {
+  bool const wasFirstRender = m_firstRender;
+
   auto needsSwitch = [&]() -> bool {
     if (m_firstRender) return true;
     if (std::holds_alternative<ListModel>(model)) return !activeModel<ExtensionListModel>();
@@ -66,6 +85,8 @@ void ExtensionViewHost::render(const RenderModel &model) {
     switchViewType(model);
   }
 
+  QString currentText = searchText();
+
   if (auto *listModel = std::get_if<ListModel>(&model)) {
     renderList(*listModel);
   } else if (auto *gridModel = std::get_if<GridModel>(&model)) {
@@ -76,6 +97,15 @@ void ExtensionViewHost::render(const RenderModel &model) {
     renderForm(*formModel);
   } else {
     qWarning() << "Extension sent unrecognized model type";
+  }
+
+  // make sure we forward the fallback text correctly, even when the target List/Grid is controlled
+  // it is important to take a snapshot of the search text BEFORE we do the first render because a controlled
+  // component will change the search text as part of its render.
+  if (wasFirstRender && m_onSearchTextChange.has_value() && !currentText.isEmpty()) {
+    qDebug() << "sending initial text" << currentText;
+    setSearchText(currentText);
+    ++m_searchEventCount;
   }
 }
 
@@ -92,13 +122,11 @@ void ExtensionViewHost::switchViewType(const RenderModel &model) {
   if (std::holds_alternative<ListModel>(model)) {
     auto *m = new ExtensionListModel(notify, this);
     m->setScope(ViewScope(context(), this));
-    m->initialize();
     m_model = m;
     setSearchInteractive(true);
   } else if (std::holds_alternative<GridModel>(model)) {
     auto *m = new ExtensionGridModel(notify, this);
     m->setScope(ViewScope(context(), this));
-    m->initialize();
     m_model = m;
     setSearchInteractive(true);
   } else if (std::holds_alternative<RootDetailModel>(model)) {
@@ -125,7 +153,7 @@ void ExtensionViewHost::renderList(const ListModel &model) {
 
   if (!model.navigationTitle.empty()) { setNavigationTitle(model.navigationTitle.c_str()); }
   if (!model.searchPlaceholderText.empty()) { setSearchPlaceholderText(model.searchPlaceholderText.c_str()); }
-  if (auto text = model.searchText) { setSearchText(text->c_str()); }
+  if (model.searchText) { applyControlledSearchText(*model.searchText); }
 
   bool const wasLoading = m_isLoading;
   m_isLoading = model.isLoading;
@@ -165,7 +193,7 @@ void ExtensionViewHost::renderGrid(const GridModel &model) {
 
   if (!model.navigationTitle.empty()) { setNavigationTitle(model.navigationTitle.c_str()); }
   if (!model.searchPlaceholderText.empty()) { setSearchPlaceholderText(model.searchPlaceholderText.c_str()); }
-  if (auto text = model.searchText) { setSearchText(text->c_str()); }
+  if (model.searchText) { applyControlledSearchText(*model.searchText); }
 
   bool const wasLoading = m_isLoading;
   m_isLoading = model.isLoading;
@@ -189,6 +217,8 @@ void ExtensionViewHost::renderGrid(const GridModel &model) {
 }
 
 void ExtensionViewHost::textChanged(const QString &text) {
+  if (m_settingSearchText) return;
+
   bool const had = m_hasSearchText;
   m_hasSearchText = !text.isEmpty();
   if (had != m_hasSearchText) emit suppressEmptyViewChanged();
@@ -198,6 +228,17 @@ void ExtensionViewHost::textChanged(const QString &text) {
   } else {
     handleDebouncedSearch();
   }
+}
+
+void ExtensionViewHost::applyControlledSearchText(const EventCounted<std::string> &incoming) {
+  QString value = QString::fromStdString(incoming.value);
+  if (value == searchText()) return;
+
+  if (incoming.eventCount < m_searchEventCount) return;
+
+  m_settingSearchText = true;
+  setSearchText(value);
+  m_settingSearchText = false;
 }
 
 void ExtensionViewHost::handleDebouncedSearch() {
@@ -210,8 +251,9 @@ void ExtensionViewHost::handleDebouncedSearch() {
   }
 
   if (m_onSearchTextChange) {
+    ++m_searchEventCount;
     m_shouldResetSelection = !m_filtering;
-    notifyExtension(m_onSearchTextChange->c_str(), {text});
+    notifyExtension(m_onSearchTextChange->c_str(), {text, static_cast<int>(m_searchEventCount)});
   }
 }
 
@@ -263,16 +305,16 @@ void ExtensionViewHost::renderDetail(const RootDetailModel &model) {
   }
   setLoading(model.isLoading);
 
-  if (model.navigationTitle) { setNavigationTitle(*model.navigationTitle); }
+  if (model.navigationTitle) { setNavigationTitle(QString::fromStdString(*model.navigationTitle)); }
 
-  detail->markdown = model.markdown;
+  detail->markdown = QString::fromStdString(model.markdown);
   detail->metadata = model.metadata ? qml::metadataToVariantList(*model.metadata) : QVariantList{};
   emit detailContentChanged();
 
   detail->actions = model.actions;
   if (model.actions) {
     auto notify = [this](const QString &handler, const QJsonArray &args) { notifyExtension(handler, args); };
-    setActions(ExtensionActionPanelBuilder::build(*model.actions, notify, &m_submenuCache));
+    setActions(ExtensionActionPanelBuilder::build(*model.actions, notify));
   }
 }
 
@@ -291,15 +333,15 @@ void ExtensionViewHost::renderForm(const FormModel &model) {
   }
   setLoading(model.isLoading);
 
-  if (model.navigationTitle) { setNavigationTitle(*model.navigationTitle); }
+  if (model.navigationTitle) { setNavigationTitle(QString::fromStdString(*model.navigationTitle)); }
 
   form->setFormData(model);
 
   QString newLinkText, newLinkHref;
   if (model.searchBarAccessory) {
     if (auto *link = std::get_if<FormModel::LinkAccessoryModel>(&*model.searchBarAccessory)) {
-      newLinkText = link->text;
-      newLinkHref = link->target;
+      newLinkText = QString::fromStdString(link->text);
+      newLinkHref = QString::fromStdString(link->target);
     }
   }
   if (newLinkText != m_linkAccessoryText || newLinkHref != m_linkAccessoryHref) {
@@ -314,7 +356,7 @@ void ExtensionViewHost::renderForm(const FormModel &model) {
   if (model.actions) {
     auto notify = [this](const QString &handler, const QJsonArray &args) { notifyExtension(handler, args); };
     auto submit = [this, form]() -> std::expected<QJsonObject, QString> { return form->submit(); };
-    setActions(ExtensionActionPanelBuilder::build(*model.actions, notify, &m_submenuCache,
+    setActions(ExtensionActionPanelBuilder::build(*model.actions, notify,
                                                   ActionPanelState::ShortcutPreset::Form, submit));
   }
 }
@@ -335,17 +377,17 @@ void ExtensionViewHost::updateDropdown(const DropdownModel *dropdown) {
   }
 
   m_dropdownOnChange = dropdown->onChange;
-  m_dropdownPlaceholder = dropdown->placeholder.value_or(QString());
+  m_dropdownPlaceholder = dropdown->placeholder ? QString::fromStdString(*dropdown->placeholder) : QString();
 
   if (dropdown->dirty) { m_dropdownItems = qml::convertDropdownChildren(dropdown->children); }
 
   QString resolvedValue;
   if (dropdown->value) {
-    resolvedValue = *dropdown->value;
+    resolvedValue = QString::fromStdString(*dropdown->value);
   } else if (!m_dropdownValue.isEmpty()) {
     resolvedValue = m_dropdownValue;
   } else if (dropdown->defaultValue) {
-    resolvedValue = *dropdown->defaultValue;
+    resolvedValue = QString::fromStdString(*dropdown->defaultValue);
   } else {
     auto first = qml::firstDropdownItemValue(dropdown->children);
     if (first) resolvedValue = *first;
@@ -372,7 +414,7 @@ void ExtensionViewHost::updateDropdown(const DropdownModel *dropdown) {
   if (hadDropdown != !m_dropdownItems.isEmpty()) { emit searchAccessoryUrlChanged(); }
 
   if (!hadDropdown && !resolvedValue.isEmpty() && m_dropdownOnChange) {
-    notifyExtension(*m_dropdownOnChange, {resolvedValue});
+    notifyExtension(QString::fromStdString(*m_dropdownOnChange), {resolvedValue});
   }
 }
 
@@ -387,7 +429,7 @@ void ExtensionViewHost::setDropdownValue(const QString &value) {
       if (itemMap["id"].toString() == value) {
         m_dropdownCurrentItem = item;
         emit dropdownChanged();
-        if (m_dropdownOnChange) { notifyExtension(*m_dropdownOnChange, {value}); }
+        if (m_dropdownOnChange) { notifyExtension(QString::fromStdString(*m_dropdownOnChange), {value}); }
         return;
       }
     }
@@ -395,5 +437,5 @@ void ExtensionViewHost::setDropdownValue(const QString &value) {
 }
 
 void ExtensionViewHost::notifyExtension(const QString &handler, const QJsonArray &args) {
-  m_controller->notify(handler, args);
+  m_notify(handler, args);
 }

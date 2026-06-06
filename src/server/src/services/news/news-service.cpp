@@ -8,6 +8,7 @@
 #include "vicinae.hpp"
 #include <algorithm>
 #include <fstream>
+#include <glaze/core/common.hpp>
 #include <glaze/glaze.hpp>
 #include <ranges>
 
@@ -49,6 +50,8 @@ void NewsService::dismiss(const std::string &id) {
 bool NewsService::isDismissed(const std::string &id) const {
   return std::ranges::find(m_dismissed, id) != m_dismissed.end();
 }
+
+bool NewsService::hasUnreadNews() const { return !activeItems().empty(); }
 
 std::vector<const NewsItem *> NewsService::activeItems() const {
   const auto &cfg = m_config.value();

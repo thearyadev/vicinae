@@ -7,12 +7,12 @@ class WindowManager : public QObject {
 
 signals:
   void windowsChanged() const;
+  void focusChanged() const;
 
 public:
   AbstractWindowManager *provider() const;
   AbstractWindowManager::WindowList listWindowsSync();
   AbstractWindowManager::WindowPtr getFocusedWindow();
-  bool focusApp(const AbstractApplication &app) const;
 
   AbstractWindowManager::WindowList findAppWindows(const AbstractApplication &app) const;
   AbstractWindowManager::WindowList listWindows() const;

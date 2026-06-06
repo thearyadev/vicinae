@@ -1,8 +1,13 @@
 import type { PathLike } from "node:fs";
 import { rm } from "node:fs/promises";
-import { bus } from "./bus";
 import { WindowManagement } from "./window-management";
-import type { Application } from "./proto/application";
+import type {
+	Application,
+	DesktopNotificationPayload,
+	NotificationUrgency,
+} from "./proto/api";
+import { getClient } from "./client";
+import { ImageLike, serializeProtoImage } from "./image";
 
 /**
   @ignore - we should probably move this to raycast compat, I don't think we want that.
@@ -46,6 +51,11 @@ export type RunInTerminalOptions = {
 	 * @see WindowManagement
 	 */
 	title?: string;
+
+	/**
+	 * Sets the current working directory for the terminal program.
+	 */
+	workingDirectory?: string;
 };
 
 /**
@@ -77,13 +87,14 @@ export const runInTerminal = async (
 	args: string[],
 	options: RunInTerminalOptions = {},
 ) => {
-	const { hold = false, appId, title } = options;
+	const { hold = false, appId, title, workingDirectory } = options;
 
-	await bus.request("app.runInTerminal", {
+	await getClient().Application.runInTerminal({
 		cmdline: args,
 		hold,
 		appId,
 		title,
+		workingDirectory,
 	});
 };
 
@@ -101,10 +112,7 @@ export const open = async (target: string, app?: Application | string) => {
 		}
 	}
 
-	await bus.request("app.open", {
-		target,
-		appId,
-	});
+	await getClient().Application.open(target, appId);
 };
 
 /**
@@ -126,9 +134,7 @@ export const getFrontmostApplication = async (): Promise<Application> => {
 export const getApplications = async (
 	target?: string,
 ): Promise<Application[]> => {
-	const res = await bus.request("app.list", { target });
-
-	return res.unwrap().apps;
+	return getClient().Application.list(target);
 };
 
 /**
@@ -137,12 +143,7 @@ export const getApplications = async (
 export const getDefaultApplication = async (
 	path: string,
 ): Promise<Application> => {
-	const res = await bus.request("app.getDefault", { target: path });
-	const app = res.unwrap().app;
-
-	if (!app) throw new Error(`No default application for target ${path}`);
-
-	return app;
+	return getClient().Application.getDefault(path);
 };
 
 /**
@@ -152,16 +153,50 @@ export const showInFileBrowser = async (
 	path: PathLike,
 	options: ShowInFileBrowserOptions = {},
 ): Promise<void> => {
-	if (options.select) {
-		await bus.request("app.showInFileBrowser", {
-			target: path.toString(),
-			select: true,
-		});
-		return;
-	}
-
-	const fileBrowser = await getDefaultApplication("inode/directory"); // FIXME: we may want something more robust
-	await open(path.toString(), fileBrowser);
+	await getClient().Application.showInFileBrowser(
+		path.toString(),
+		options.select ?? true,
+	);
 };
 
-export { Application } from "./proto/application";
+export type DesktopNotificationOptions = {
+	/**
+	 * The title of the notification, usually shown at the very top.
+	 */
+	title: string;
+
+	/**
+	 * The content of the notification.
+	 * How much you can fit in there highly depends on the capabilities of the running notification server.
+	 * Similarly, your notification server may accept the use of some markup language to further style the content.
+	 */
+	body: string;
+
+	/**
+	 * Icon used to represent the notification, usually positionned on the left.
+	 */
+	icon?: ImageLike;
+
+	/**
+	 * Urgency level associated with the notification.
+	 */
+	urgency?: NotificationUrgency;
+};
+
+/**
+ * @category System
+ */
+export const sendDesktopNotification = (payload: {
+	title: string;
+	body: string;
+	icon?: ImageLike;
+	urgency?: NotificationUrgency;
+}) =>
+	getClient().UI.sendDesktopNotification({
+		title: payload.title,
+		body: payload.body,
+		icon: payload.icon ? serializeProtoImage(payload.icon) : undefined,
+		urgency: payload.urgency ?? "Normal",
+	});
+
+export type { Application } from "./proto/api";

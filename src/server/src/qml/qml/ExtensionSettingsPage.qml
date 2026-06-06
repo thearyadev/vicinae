@@ -6,11 +6,16 @@ Item {
     id: root
     readonly property var extModel: settings.extensionModel
     readonly property string providerId: settings.currentPage
-
+    readonly property real contentWidth: Math.min(width, 680)
+    readonly property real sideMargin: (width - contentWidth) / 2
     Component.onCompleted: {
         root.extModel.commandModel.setFilter("");
         root.extModel.selectProviderById(root.providerId);
         _handlePendingCommand();
+    }
+
+    HoverResetOnModelChange {
+        target: root.extModel ? root.extModel.commandModel : null
     }
 
     function _handlePendingCommand() {
@@ -38,18 +43,6 @@ Item {
 
     property string expandedCommandId: ""
 
-    SettingsToggle {
-        id: enableToggle
-        visible: root.extModel.selectedIsProvider
-        checked: root.extModel.selectedEnabled
-        anchors.top: parent.top
-        anchors.right: parent.right
-        anchors.topMargin: 12
-        anchors.rightMargin: 20
-        z: 1
-        onToggled: root.extModel.setEnabled(root.extModel.selectedRow, checked)
-    }
-
     Flickable {
         id: cmdFlickable
         anchors.fill: parent
@@ -75,67 +68,45 @@ Item {
             width: cmdFlickable.width
             spacing: 0
 
-            readonly property real contentWidth: Math.min(width, 680)
-            readonly property real sideMargin: (width - contentWidth) / 2
-
-            Item {
-                implicitHeight: 24
-            }
-
             ColumnLayout {
-                Layout.alignment: Qt.AlignHCenter
+                visible: root.extModel.selectedDescription !== ""
                 Layout.fillWidth: true
-                Layout.leftMargin: contentColumn.sideMargin + 20
-                Layout.rightMargin: contentColumn.sideMargin + 20
-                spacing: 8
-
-                ViciImage {
-                    source: root.extModel.selectedIconSource
-                    Layout.preferredWidth: 48
-                    Layout.preferredHeight: 48
-                    Layout.alignment: Qt.AlignHCenter
-                }
+                Layout.leftMargin: root.sideMargin + 20
+                Layout.rightMargin: root.sideMargin + 20
+                Layout.topMargin: 16
+                spacing: 0
 
                 Text {
-                    text: root.extModel.selectedTitle
+                    text: "Description"
                     color: Theme.foreground
-                    font.pointSize: Theme.regularFontSize + 2
+                    font.pointSize: Theme.regularFontSize
                     font.bold: true
-                    horizontalAlignment: Text.AlignHCenter
-                    Layout.fillWidth: true
+                    Layout.bottomMargin: 8
                 }
 
                 Text {
-                    visible: root.extModel.selectedDescription !== ""
                     text: root.extModel.selectedDescription
                     color: Theme.textMuted
                     font.pointSize: Theme.regularFontSize
-                    horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.Wrap
                     Layout.fillWidth: true
                 }
-            }
 
-            Item {
-                visible: root.extModel.hasPreferences || root.extModel.commandModel.totalCount > 0
-                implicitHeight: 16
-            }
+                Item {
+                    implicitHeight: 16
+                }
 
-            Rectangle {
-                visible: root.extModel.hasPreferences || root.extModel.commandModel.totalCount > 0
-                Layout.fillWidth: true
-                Layout.leftMargin: contentColumn.sideMargin + 20
-                Layout.rightMargin: contentColumn.sideMargin + 20
-                height: 1
-                color: Theme.divider
+                ViciDivider {
+                    Layout.fillWidth: true
+                }
             }
 
             // Provider preferences
             ColumnLayout {
                 visible: root.extModel.hasPreferences
                 Layout.fillWidth: true
-                Layout.leftMargin: contentColumn.sideMargin + 20
-                Layout.rightMargin: contentColumn.sideMargin + 20
+                Layout.leftMargin: root.sideMargin + 20
+                Layout.rightMargin: root.sideMargin + 20
                 Layout.topMargin: 16
                 spacing: 0
 
@@ -156,10 +127,8 @@ Item {
                     implicitHeight: 16
                 }
 
-                Rectangle {
+                ViciDivider {
                     Layout.fillWidth: true
-                    height: 1
-                    color: Theme.divider
                 }
             }
 
@@ -167,8 +136,8 @@ Item {
             RowLayout {
                 visible: root.extModel.commandModel.totalCount > 0
                 Layout.fillWidth: true
-                Layout.leftMargin: contentColumn.sideMargin + 20
-                Layout.rightMargin: contentColumn.sideMargin + 20
+                Layout.leftMargin: root.sideMargin + 20
+                Layout.rightMargin: root.sideMargin + 20
                 Layout.topMargin: 16
                 Layout.bottomMargin: 8
                 spacing: 8
@@ -186,7 +155,7 @@ Item {
                     height: 24
                     radius: 4
                     color: "transparent"
-                    border.color: cmdSearchField.activeFocus ? Theme.inputBorderFocus : Theme.inputBorder
+                    border.color: Config.withAlpha(cmdSearchField.activeFocus ? Theme.inputBorderFocus : Theme.inputBorder, Config.windowOpacity)
                     border.width: 1
 
                     RowLayout {
@@ -195,8 +164,8 @@ Item {
                         anchors.rightMargin: 6
                         spacing: 4
 
-                        Image {
-                            source: "image://vicinae/builtin:magnifying-glass?fg=" + Theme.textMuted
+                        ViciImage {
+                            source: Img.builtin("magnifying-glass").withFillColor(Theme.textMuted)
                             sourceSize.width: 10
                             sourceSize.height: 10
                             Layout.preferredWidth: 10
@@ -216,9 +185,15 @@ Item {
                             padding: 0
                             activeFocusOnTab: true
 
+                            Timer {
+                                id: cmdFilterDebounce
+                                interval: 16
+                                onTriggered: root.extModel.commandModel.setFilter(cmdSearchField.text)
+                            }
+
                             onTextChanged: {
                                 cmdFlickable._minContentHeight = cmdFlickable.contentHeight;
-                                root.extModel.commandModel.setFilter(text);
+                                cmdFilterDebounce.restart();
                             }
                             onActiveFocusChanged: {
                                 if (!activeFocus)
@@ -253,6 +228,7 @@ Item {
                     required property string alias
                     required property string entrypointId
                     required property bool hasPreferences
+                    required property string shortcut
 
                     readonly property bool isExpanded: root.expandedCommandId === entrypointId
 
@@ -260,7 +236,7 @@ Item {
                         width: parent.width
                         height: cmdRow.implicitHeight + 16
                         backgroundColor: Qt.rgba(Theme.background.r, Theme.background.g, Theme.background.b, Config.windowOpacity)
-                        color: cmdHover.hovered ? Qt.rgba(Theme.listItemHoverBg.r, Theme.listItemHoverBg.g, Theme.listItemHoverBg.b, Config.windowOpacity) : Qt.rgba(Theme.background.r, Theme.background.g, Theme.background.b, Config.windowOpacity)
+                        color: (cmdHover.hovered && HoverActivation.active) ? Qt.rgba(Theme.listItemHoverBg.r, Theme.listItemHoverBg.g, Theme.listItemHoverBg.b, Config.windowOpacity) : Qt.rgba(Theme.background.r, Theme.background.g, Theme.background.b, Config.windowOpacity)
 
                         HoverHandler {
                             id: cmdHover
@@ -282,8 +258,8 @@ Item {
                             anchors.left: parent.left
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
-                            anchors.leftMargin: contentColumn.sideMargin + 20
-                            anchors.rightMargin: contentColumn.sideMargin + 20
+                            anchors.leftMargin: root.sideMargin + 20
+                            anchors.rightMargin: root.sideMargin + 20
                             spacing: 10
 
                             ViciImage {
@@ -295,8 +271,8 @@ Item {
 
                             ViciImage {
                                 source: cmdDelegate.iconSource
-                                Layout.preferredWidth: 20
-                                Layout.preferredHeight: 20
+                                Layout.preferredWidth: 24
+                                Layout.preferredHeight: 24
                             }
 
                             Text {
@@ -305,6 +281,16 @@ Item {
                                 font.pointSize: Theme.regularFontSize
                                 elide: Text.ElideRight
                                 Layout.fillWidth: true
+                            }
+
+                            ShortcutField {
+                                visible: settings.globalShortcutsSupported
+                                bordered: false
+                                placeholder: "Shortcut"
+                                shortcutId: cmdDelegate.entrypointId
+                                shortcut: cmdDelegate.shortcut
+                                onAccepted: shortcut => root.extModel.setShortcutByEntrypointId(cmdDelegate.entrypointId, shortcut)
+                                onCleared: root.extModel.clearShortcutByEntrypointId(cmdDelegate.entrypointId)
                             }
 
                             TextField {
@@ -325,7 +311,7 @@ Item {
                                 background: Rectangle {
                                     radius: 4
                                     color: "transparent"
-                                    border.color: cmdAliasInput.activeFocus ? Theme.inputBorderFocus : Theme.inputBorder
+                                    border.color: Config.withAlpha(cmdAliasInput.activeFocus ? Theme.inputBorderFocus : Theme.inputBorder, Config.windowOpacity)
                                     border.width: cmdAliasInput.activeFocus || cmdAliasInput.hovered ? 1 : 0
                                 }
 
@@ -345,7 +331,7 @@ Item {
                                 Layout.preferredHeight: 20
                                 radius: 4
                                 color: cmdDelegate.enabled ? Theme.accent : "transparent"
-                                border.color: cmdDelegate.enabled ? Theme.accent : Theme.inputBorder
+                                border.color: Config.withAlpha(cmdDelegate.enabled ? Theme.accent : Theme.inputBorder, Config.windowOpacity)
                                 border.width: 1
 
                                 Text {
@@ -376,14 +362,12 @@ Item {
                             implicitHeight: expandedContent.implicitHeight + 24
                             color: "transparent"
 
-                            Rectangle {
+                            ViciDivider {
                                 anchors.top: parent.top
                                 anchors.left: parent.left
                                 anchors.right: parent.right
-                                anchors.leftMargin: contentColumn.sideMargin + 20
-                                anchors.rightMargin: contentColumn.sideMargin + 20
-                                height: 1
-                                color: Theme.divider
+                                anchors.leftMargin: root.sideMargin + 20
+                                anchors.rightMargin: root.sideMargin + 20
                             }
 
                             ColumnLayout {
@@ -391,8 +375,8 @@ Item {
                                 anchors.left: parent.left
                                 anchors.right: parent.right
                                 anchors.top: parent.top
-                                anchors.leftMargin: contentColumn.sideMargin + 52
-                                anchors.rightMargin: contentColumn.sideMargin + 20
+                                anchors.leftMargin: root.sideMargin + 52
+                                anchors.rightMargin: root.sideMargin + 20
                                 anchors.topMargin: 12
                                 spacing: 8
 
@@ -412,18 +396,15 @@ Item {
                         }
                     }
 
-                    // Row separator
-                    Rectangle {
+                    ViciDivider {
                         visible: cmdDelegate.index < root.extModel.commandModel.count - 1
                         width: parent.width
-                        height: 1
-                        color: Theme.divider
                     }
                 }
             }
 
             Item {
-                implicitHeight: 24
+                implicitHeight: 4
             }
         }
     }

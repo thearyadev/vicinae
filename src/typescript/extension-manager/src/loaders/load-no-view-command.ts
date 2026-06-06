@@ -1,4 +1,4 @@
-import { LaunchEventData } from "../proto/extension";
+import type { LaunchEventData } from "../proto/extension-manager";
 
 export default async (data: LaunchEventData) => {
 	const module = await import(data.entrypoint);

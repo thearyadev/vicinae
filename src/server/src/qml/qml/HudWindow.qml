@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Window
 import QtQuick.Layouts
+import org.kde.layershell as LayerShell
 
 Window {
     id: hudRoot
@@ -10,6 +11,12 @@ Window {
     color: "transparent"
     visible: false
 
+    LayerShell.Window.layer: LayerShell.Window.LayerTop
+    LayerShell.Window.scope: "vicinae-hud"
+    LayerShell.Window.anchors: LayerShell.Window.AnchorNone
+    LayerShell.Window.wantsToBeOnActiveScreen: true
+    LayerShell.Window.keyboardInteractivity: LayerShell.Window.KeyboardInteractivityNone
+
     Component.onCompleted: hud.registerWindow(hudRoot)
 
     Rectangle {
@@ -18,7 +25,7 @@ Window {
         height: row.height + 20
         radius: height / 2
         color: Qt.rgba(Theme.background.r, Theme.background.g, Theme.background.b, 0.9)
-        border.color: Theme.divider
+        border.color: Config.withAlpha(Theme.divider, Config.windowOpacity)
         border.width: 1
 
         RowLayout {

@@ -1,21 +1,17 @@
 {
-  abseil-cpp,
   cmake,
   cmark-gfm,
   fetchNpmDeps,
   kdePackages,
   lib,
   libqalculate,
-  minizip,
   ninja,
   nodejs,
   npmHooks,
   pkg-config,
-  protobuf,
   qt6,
   gcc15Stdenv,
   wayland,
-  libxml2,
   glaze,
 }:
 let
@@ -35,12 +31,12 @@ gcc15Stdenv.mkDerivation (finalAttrs: {
 
   apiDeps = fetchNpmDeps {
     src = "${finalAttrs.src}/src/typescript/api";
-    hash = "sha256-Tr+m8MLaWR8wq+cYpQwZTIzRt2tgDIyc8vVda2x+k4k=";
+    hash = "sha256-Ki/l3PiBY3R0Bzd6leqx2OxA7c+jckjr+YD4GHHaSqI=";
   };
 
   extensionManagerDeps = fetchNpmDeps {
     src = "${finalAttrs.src}/src/typescript/extension-manager";
-    hash = "sha256-8ONawCmKxHwWS0Tx04MCpQmtWfIpJYU8RcqMtQiT/Sw=";
+    hash = "sha256-6Kz7I8cGm1lnGPOI/gju3t5/imnbBFlDEKzWar5O770=";
   };
 
   cmakeFlags = lib.mapAttrsToList lib.cmakeFeature {
@@ -63,26 +59,22 @@ gcc15Stdenv.mkDerivation (finalAttrs: {
     ninja
     nodejs
     pkg-config
-    protobuf
     qt6.wrapQtAppsHook
   ];
 
   buildInputs = [
-    abseil-cpp
     cmark-gfm
     kdePackages.layer-shell-qt
     kdePackages.qtkeychain
+	kdePackages.qtshadertools
     kdePackages.syntax-highlighting
     libqalculate
-    minizip
     nodejs
-    protobuf
     qt6.qtbase
     qt6.qtdeclarative
     qt6.qtsvg
     qt6.qtwayland
     wayland
-    libxml2
     glaze
   ];
 
@@ -100,6 +92,7 @@ gcc15Stdenv.mkDerivation (finalAttrs: {
         (placeholder "out")
       ]
     }"
+    "--set VICINAE_INPUT_SERVER_BIN /run/wrappers/bin/vicinae-input-server"
   ];
 
   meta = {

@@ -3,9 +3,11 @@
 #include "command-controller.hpp"
 #include "common.hpp"
 #include <QObject>
+#include <vector>
 
 class ApplicationContext;
 class ActionPanelState;
+class ActionPanelView;
 class Toast;
 class ImageURL;
 class QKeyEvent;
@@ -19,8 +21,11 @@ public:
 
   void setProxy(BaseView *proxy);
 
-  void setActions(std::unique_ptr<ActionPanelState> actions);
+  virtual void setActions(std::unique_ptr<ActionPanelState> actions);
+  void setActions(ActionPanelView *view);
   void clearActions();
+
+  ActionPanelView *actionPanelRoot() const;
 
   virtual bool supportsSearch() const;
   virtual bool searchInteractive() const;
@@ -88,4 +93,5 @@ private:
   CommandController *m_cmd = nullptr;
 
   const BaseView *m_navProxy = this;
+  ActionPanelView *m_rootPanel = nullptr;
 };
